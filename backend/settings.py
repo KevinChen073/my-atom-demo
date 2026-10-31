@@ -1,0 +1,42 @@
+from __future__ import annotations
+
+import os
+from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import load_dotenv
+
+
+ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(ROOT / ".env", override=False)
+
+
+@dataclass(frozen=True)
+class Settings:
+    root: Path = ROOT
+    data_dir: Path = Path(os.getenv("MYATOM_DATA_DIR", str(ROOT / "data"))).resolve()
+    app_env: str = os.getenv("APP_ENV", "local")
+    model_api_key: str = os.getenv("MODEL_API_KEY", "")
+    model_name: str = os.getenv("MODEL_NAME", "deepseek-flash")
+    model_base_url: str = os.getenv("MODEL_BASE_URL", "https://api.deepseek.com")
+    model_reasoning_effort: str = os.getenv("MODEL_REASONING_EFFORT", "high")
+    model_code_reasoning_effort: str = os.getenv("MODEL_CODE_REASONING_EFFORT", "none")
+    max_model_calls: int = int(os.getenv("MAX_MODEL_CALLS", "30"))
+    max_total_tokens: int = int(os.getenv("MAX_TOTAL_TOKENS", "40000"))
+    max_run_seconds: int = int(os.getenv("MAX_RUN_SECONDS", "900"))
+    max_fix_rounds: int = int(os.getenv("MAX_FIX_ROUNDS", "2"))
+    preview_port: int = int(os.getenv("PREVIEW_PORT", "8001"))
+    workbench_origin: str = os.getenv("WORKBENCH_ORIGIN", "http://127.0.0.1:8000")
+
+    @property
+    def app_db(self) -> Path:
+        return self.data_dir / "myatom.sqlite3"
+
+    @property
+    def checkpoint_db(self) -> Path:
+        return self.data_dir / "checkpoints.sqlite3"
+
+    @property
+    def template_dir(self) -> Path:
+        return self.root / "templates" / "react-vite"
+
