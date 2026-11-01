@@ -58,3 +58,16 @@
 等待 Azure SQL 防火墙传播窗口后，再以新的访客会话重复健康检查、项目创建、详情读回和列表读回，均通过；复测项目为 `d7928e21-e3a8-4fba-bd05-53ac8d682719`。这样减少旧规则短时缓存造成误判的可能。未更换容器修订，不能以此代替重建后恢复测试。
 
 完整生成、构建、预览、回滚、异常后台与未授权入口拒绝仍按 [AZ-03～AZ-08](../tests/cases/DEPLOYMENT-AZURE.md)执行。项目冒烟没有调用模型，也没有读取或记录用户的模型 Key。
+
+## 2026-11-02 浏览器模型 Key 持久化部署与冒烟
+
+用户确认 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md) 后，`deploy/azure-preparation` 分支提交 `553298865602c430072958f9f96ef7d95db8ca38` 已推送。[Azure 镜像工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41325134478)和 [PostgreSQL 持久化工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41325134388)均通过。门户将固定标签 `ghcr.io/kevinchen073/my-atom-demo:smoke-553298865602c430072958f9f96ef7d95db8ca38` 部署为 `myatom-azure-check--0000010`；修订显示“正在运行(最大值)”、1 个副本、100% 流量。容器日志显示应用启动完成，系统事件显示流量已切换。
+
+| 检查项 | 实测结果 |
+| --- | --- |
+| 在线服务 | [工作台](https://myatom-azure-check.kindrock-ede6f587.eastasia.azurecontainerapps.io/) 可打开；`/api/health` 为 HTTP 200，`ok=true`、`app_env=azure_demo`。 |
+| 默认模型配置 | `/api/model/defaults` 的 `api_key` 字段为空；未向测试浏览器预填服务端 Key。 |
+| 保存与刷新 | 在独立测试浏览器输入虚构 Key `fake-azure-smoke-key-20261102`，点击保存，刷新后模型设置可显示同一测试字符串。 |
+| 清除 | 点击“清除 Key”后刷新，API Key 输入框为空；测试字符串已从该测试浏览器清除。 |
+
+此次只证明线上浏览器保存、刷新读回与清除路径。未使用真实模型 Key，未执行模型连接、生成、预算停机或密钥在数据库及运行日志中的在线专项审计。共享 origin 预览脚本可能读取工作台 `localStorage`，因此仍限受信演示环境；完整交付验收继续按 [AZ-03～AZ-08](../tests/cases/DEPLOYMENT-AZURE.md)执行。
