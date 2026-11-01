@@ -1,10 +1,10 @@
 # MYATOM 系统架构（v0.1）
 
-状态：设计基线，2026-10-30；2026-10-31 按用户确认的 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 修订生成交付物边界；2026-11-01 按 [ADR-006](decisions/ADR-006-single-main-run-scope.md) 收束为单次主线交付，并按 [ADR-010](decisions/ADR-010-structured-card-single-send.md) 增加当前等待卡的消息解释层。GitHub → Azure 路线按 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md) 选定，当前部署范围由 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md) 限定为受信演示；Atoms Spike 仅保留可选迁移证据。产品范围见 [PRD](PRD.md)，固定与待定边界见 [ADR-001](decisions/ADR-001-baseline.md)，冲突处理见 [ADR-002](decisions/ADR-002-change-control.md)。
+状态：设计基线，2026-10-30；2026-10-31 按用户确认的 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 修订生成交付物边界；2026-11-01 按 [ADR-006](decisions/ADR-006-single-main-run-scope.md) 收束为单次主线交付，并按 [ADR-010](decisions/ADR-010-structured-card-single-send.md) 增加当前等待卡的消息解释层。GitHub → Azure 路线按 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md) 选定，受信演示边界见 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)，Azure SQL 数据库决定见 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md)，版本文本存储见 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md)；本地 SQLite 版本存储与用户模型 Key 见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)、[ADR-025](decisions/ADR-025-browser-model-settings.md)。产品范围见 [PRD](PRD.md)，冲突处理见 [ADR-002](decisions/ADR-002-change-control.md)。
 
 ## 1. 原则与系统边界
 
-固定 React + TypeScript + Vite 作为**生成应用模板**及主 Web 前端的优先方案；Python + LangGraph 编排**一个主 Agent**，不为演示而拆多 Agent。模板控制依赖、目录、构建命令和可预览能力。节点是确定性工作流阶段，Agent Loop 只在确需模型决策、工具选择或修复时运行。每次确认与外部副作用都有持久边界。存储生产目标由 ADR-017 选定，但仍保留可替换接口；Runner 与沙箱实现仍须通过隔离验证。
+固定 React + TypeScript + Vite 作为**生成应用模板**及主 Web 前端的优先方案；Python + LangGraph 编排**一个主 Agent**，不为演示而拆多 Agent。模板控制依赖、目录、构建命令和可预览能力。节点是确定性工作流阶段，Agent Loop 只在确需模型决策、工具选择或修复时运行。每次确认与外部副作用都有持久边界。Azure 存储目标由 ADR-021 与 ADR-023 选定，接口继续可替换；受信演示的同容器 Runner 不构成沙箱。
 
 当前 Graph 目标只覆盖**一个简单需求在一个 run 内生成一版可用交付物**。不增加按消息语义决定“新建内容 / 修改内容 / sidecar 聊天”的入口路由，也不为复杂需求自动跳回已结束阶段。当前等待卡前的消息解释器只在阶段内识别回答、修改、问题和明确批准，并把候选意图交给确定性门禁；它不是 Graph 的全局 IntentRouter，不能调用写文件工具。澄清阶段内补问、计划阶段内修改与构建错误修复是有界的局部循环；交付后修改需求启动新 run。快照代码回滚由版本服务处理，不进入该 Graph。见 [ADR-006](decisions/ADR-006-single-main-run-scope.md) 与 [ADR-010](decisions/ADR-010-structured-card-single-send.md)。
 
@@ -22,7 +22,7 @@ flowchart LR
   H --> M[模型服务适配器]
 ```
 
-本地使用 Python API 服务和受控 worker，默认 SQLite 保存平台记录与 checkpoint，项目产物存于非公开数据目录；也可在 `APP_ENV=local` 配置 `MYATOM_DATABASE_URL` 对 PostgreSQL 平台状态与 checkpoint 做开发验证。GitHub → Azure 当前按 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md) 采用**受信演示**：主 API 容器内构建，Azure Files 挂载 `/app/data`，平台状态选择 Azure Database for PostgreSQL Flexible Server；独立异常后台仍单独部署。它不提供代码执行隔离，只允许获授权用户访问；匿名公网生产模式仍拒绝启动。实施与未验证边界见 [Azure 持久化](AZURE-PERSISTENCE.md)。浏览器从不直接调用模型服务或读取服务器文件。
+本地使用 Python API 服务和受控 worker，SQLite 保存平台记录、checkpoint、预览票据及完整版本文件，见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)。Azure 按 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 与 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 采用**受信演示**：主 API 容器内构建，容器自身 `/app/data` 只作临时工作区；平台记录、LangGraph checkpoint 与已提交版本的文本文件统一使用 Azure SQL；独立异常后台仍单独部署。尚未发布新镜像或通过 Azure 跨重启验收。它不提供代码执行隔离，只允许获授权用户访问；匿名公网生产模式仍拒绝启动。实施与未验证边界见 [Azure 持久化](AZURE-PERSISTENCE.md)。浏览器不直接调用模型服务或读取服务器文件；本地模型设置接口可在严格 loopback 条件下返回 `.env` Key，见 [ADR-025](decisions/ADR-025-browser-model-settings.md)。
 
 下文的 `ProjectRepository`、checkpointer、事件表与异常库属于 **MYATOM 平台**，可以使用服务端数据库；生成交付物自己的业务数据限其预览 origin 下的 `localStorage`。同一项目跨版本保持稳定 origin，不同项目须使用隔离 origin；项目 ID 作为存储键前缀不能阻止同源代码读取其他项目的数据。生成交付物若包含后端，只能有一个进程、一个监听端口，且不得用服务端数据库/缓存保存业务数据；MYATOM 的主 API、预览网关、独立异常后台不计入该限额。
 
@@ -32,17 +32,33 @@ flowchart LR
 
 | 接口 | 责任/最小方法 | 本地候选 | 生产候选与未决 |
 | --- | --- | --- | --- |
-| `ProjectRepository` | 项目/会话/版本 CRUD、乐观版本检查、按 owner 查找 | SQLite；可选 PostgreSQL 开发适配 | Azure Database for PostgreSQL；真实数据库与多实例恢复待测 |
-| `CheckpointRepository` | 按 `thread_id` 恢复 LangGraph 状态 | SQLite checkpointer；可选 PostgreSQL `PostgresSaver` | PostgreSQL；重启恢复待实测 |
-| `EventLog` | 原子追加 `seq`、按 `after_seq` 回放 | SQLite；可选 PostgreSQL，后者锁定 run 行分配序号 | PostgreSQL；并发与故障恢复待实测 |
-| `ArtifactStore` | 按项目/运行/版本保存源码、构建日志、manifest | 本地非公开目录 | Azure Files 挂载的 `/app/data`；重启读回、hash 对账与清理待测 |
+| `ProjectRepository` | 项目/会话/版本 CRUD、乐观版本检查、按 owner 查找 | SQLite | Azure SQL；真实数据库与重启恢复待测 |
+| `CheckpointRepository` | 按 `thread_id` 恢复 LangGraph 状态与 pending writes | SQLite checkpointer | Azure SQL saver；并发与重启恢复待实测 |
+| `EventLog` | 原子追加 `seq`、按 `after_seq` 回放 | SQLite | Azure SQL；锁定 run 行分配序号，故障恢复待实测 |
+| `ArtifactStore` | 按项目/运行/版本保存受控源码、文本构建资源与 manifest | SQLite `version_files` | Azure SQL `version_files` 为权威存储；容器 `/app/data` 为构建缓存。真实 Azure 数据库事务待验 |
 | `GeneratedAppStorage` | 在生成模板内封装带项目/应用命名空间的浏览器 `localStorage` 读写与格式校验；只存生成应用业务数据 | 预览 origin 的浏览器存储 | 同 origin 的 Web 存储；不使用平台 DB/SQL/缓存保存交付物业务数据 |
-| `ModelGateway` | 统一消息、结构化输出、token 用量、超时、取消 | 本地配置的模型 API | Azure 端服务密钥或经授权的临时用户 Key；DeepSeek/OpenAI 兼容性待测 |
-| `Runner` | 创建隔离工作区、构建/测试、限额、停止、清理 | 本地同宿主可信开发 | Azure 上独立受限执行单元候选；隔离证据未通过前不开放公网生成 |
+| `ModelGateway` | 统一消息、结构化输出、token 用量、超时、取消 | 用户 Key 或本地 `.env` 默认值 | 用户在浏览器配置 Key；服务端当前 run 内存使用，进程重启后重新提供；兼容性待测 |
+| `Runner` | 创建工作区、构建/测试、限额、停止、清理 | 本地同宿主可信开发 | Azure 受信演示在主容器内构建；隔离证据未通过前不开放公网生成 |
 | `PreviewGateway` | 发布版本、返回受限 URL、停止/过期 | `.localhost` 项目独立 origin | HTTPS 项目稳定独立 origin 与生产会话机制；待实测 |
 | `SecretProvider` | 服务端按环境取凭证 | 本地环境配置 | Azure 托管密钥；禁止注入生成项目 |
 
-适配器不向上层暴露供应商数据库字段或模型专属消息格式。MYATOM 项目/会话/运行/版本与生成应用业务数据分属服务端和浏览器两个边界。Azure 环境从空库与空 Azure Files 共享开始，**不导入本机历史项目、记录、checkpoint 或产物**；本地环境继续独立保存原数据。浏览器业务数据不随部署路径或代码快照自动搬迁。
+适配器不向上层暴露供应商数据库字段或模型专属消息格式。MYATOM 项目/会话/运行/版本与生成应用业务数据分属服务端和浏览器两个边界。Azure 环境从专用空库与空容器目录开始，**不导入本机历史项目、记录、checkpoint 或产物**；本地环境继续独立保存原数据。浏览器业务数据不随部署路径或代码快照自动搬迁。版本入库时文件行、manifest、当前指针与五版淘汰必须处于同一数据库事务（本地 SQLite，线上 Azure SQL）；预览、源码查看和迭代基线均从数据库读，不以构建目录存在为前提。
+
+### Azure SQL 文本版本契约（Azure 实测待完成）
+
+`version_files(version_id, relative_path, text_content, utf8_bytes, sha256, kind, mime_type)` 按 `(version_id, relative_path)` 唯一；`text_content` 使用 `NVARCHAR(MAX)`，hash 对严格 UTF-8 编码后的字节计算。只接受 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 的文本扩展名、最多 64 个文件、单文件 512 KiB、每版本 2 MiB。服务端规范化相对路径，禁止绝对路径、`..`、反斜线、同名冲突与 `node_modules`。manifest 中每个文件的 hash 必须与数据库行一致，`dist/index.html` 和引用的文本资源缺一不可。
+
+```mermaid
+flowchart LR
+  A[临时工作区] --> B[源码检查与 Vite 构建]
+  B --> C[候选静态探针与文本校验]
+  C -->|单个 SQL 事务| D[versions + version_files + active_version_id]
+  D --> E[预览网关按版本读取 dist 文本]
+  D --> F[工作台读取源码]
+  D --> G[迭代 Prepare 重建临时工作区]
+```
+
+提交事务先校验当前版本仍为本 run 固定的基线，再写全部文件行和版本记录、切换当前指针、淘汰第 6 版的旧文件行；任何步骤失败整体回滚。预览仅按获授权 `version_id/path` 查询文本并设置正确 MIME、CSP 与无缓存头；SQL 不可用时返回明确错误，不能用旧容器缓存冒充可用版本。v1 已有文件仅在本地磁盘的旧版本必须检测并导入或标记不可用，不能只升级表结构后宣称可回滚。该事务与读取路径在当前代码中尚未接线。
 
 生成应用的持久化采用固定模板的 `GeneratedAppStorage` 适配：计划卡确定所需数据结构，Agent 写 React 页面与受控的本地读写逻辑，按命名空间/版本格式校验浏览器数据。预览网关须为每项目提供跨版本稳定、彼此隔离的 origin，才可同时验收刷新读回与跨项目隔离；预览不能调用主 Agent 管理 API，也不能持有数据库凭证或密钥。浏览器存储容量、清理存储、跨设备和旧版数据格式不兼容都需在产品中说明。生成应用后端为可选能力，最多一个进程/一个端口，只做不持久化业务数据的逻辑；超出范围的需求在计划卡中说明并要求缩减。
 
@@ -82,7 +98,7 @@ RunState = {
 }
 ```
 
-存储事务保证：用户消息先独立入库再返回接收回执；解释器输出是候选，最终决定、状态转移、事件追加使用同一个业务事务。文件产物以临时目录写入后原子更名，再提交 `artifact_manifest_ref`。checkpoint 是流程恢复依据，业务记录是 UI/审计依据；两者不共享同一“写入成功”的假设，启动时分别恢复未解释消息与待处理决定。确认卡采用 `card_id/spec_version` 乐观锁，过期确认返回冲突和最新卡片。解释调用计入 Agent 执行时间，用户等待不计时；解释器只读卡片，不取得生成工具权限。
+存储事务保证：用户消息先独立入库再返回接收回执；解释器输出是候选，最终决定、状态转移、事件追加使用同一个业务事务。两端候选目录只负责构建，受控文本文件与 manifest、版本指针在同一数据库事务提交。checkpoint 是流程恢复依据，业务记录是 UI/审计依据；两者不共享同一“写入成功”的假设，启动时分别恢复未解释消息与待处理决定。确认卡采用 `card_id/spec_version` 乐观锁，过期确认返回冲突和最新卡片。解释调用计入 Agent 执行时间，用户等待不计时；解释器只读卡片，不取得生成工具权限。
 
 版本目录与项目记录分开：`RunState.last_good_version_id` 是运行中的参考，项目级 `active_version_id` 才是预览/回滚的当前指向。只有构建和预览可用性检查通过的完整源码、资源、锁文件、manifest、构建产物及测试引用进入不可变可用快照。成功发布先持久化新快照并原子切换当前指向，再淘汰最早且非当前的快照，使每项目最多保留 5 个可用版本；失败不切换、不淘汰。回滚原子切换到现存可用快照，不新增版本；重复请求幂等。清理旧快照须在元数据提交后执行，并能在中断后补偿，不能产生悬空指向。`approved_spec_version` 是计划确认版本，不等同交付物 `version_id`。
 
@@ -179,7 +195,7 @@ API 读 run 时补充服务端 `active_elapsed_seconds` 与 `execution_running`�
 
 ## 7. 生成产物与预览隔离
 
-产物目录建议 `data/projects/{project_id}/runs/{run_id}/workspace`，版本在 `data/artifacts/{project_id}/{version_id}`；路径由服务端 ID 构造且 canonicalize，不能接受用户拼接路径。工作区与应用代码仓库分开。manifest 记录模板版本、源 hash、依赖锁、构建/测试结果、预览配置。可生成的 Web 应用限固定 React + TypeScript + Vite 模板的前端入口、静态资产、`GeneratedAppStorage` 及符合单进程/单端口边界的可选后端；生成项目不得访问主应用的数据库/密钥。业务 `localStorage` 数据不进入产物快照，代码回滚不改写该数据；旧代码与现有数据格式兼容性不在本轮保证范围。
+本地工作区使用 `data/projects/{project_id}/runs/{run_id}/workspace`，仅作可删除的构建缓存；交付版本文本存入 SQLite `version_files`。Azure 同样只把工作区和候选目录当临时构建缓存，已提交版本以 Azure SQL `version_files` 按 `version_id/path` 保存文本。路径由服务端 ID 构造且 canonicalize，不能接受用户拼接路径。manifest 记录模板版本、源 hash、依赖锁、构建/测试结果、预览配置。可生成的 Web 应用限固定 React + TypeScript + Vite 模板的前端入口、静态资产、`GeneratedAppStorage` 及符合单进程/单端口边界的可选后端；生成项目不得访问主应用的数据库/密钥。业务 `localStorage` 数据不进入产物快照，代码回滚不改写该数据；旧代码与现有数据格式兼容性不在本轮保证范围。
 
 **Docker 可用时**：每 run 独立非 root 容器，资源/时长限制、只挂载工作区、默认无宿主网络及密钥，依赖下载阶段与运行阶段分离；预览通过独立 origin 和受限代理访问，禁止同源权限继承，设置 CSP、sandbox iframe、短期 URL 和反向代理路径检查。Docker 本身也需本地实测。
 

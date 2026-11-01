@@ -1,0 +1,36 @@
+export type ModelConfig = {
+  provider: 'deepseek' | 'openai_compatible'
+  api_key: string
+  base_url: string
+  model_name: string
+}
+
+const STORAGE_KEY = 'myatom.model-config.v1'
+export const DEFAULT_MODEL: ModelConfig = {
+  provider: 'deepseek', api_key: '', base_url: 'https://api.deepseek.com', model_name: 'deepseek-chat',
+}
+
+export function readSavedModelConfig(): ModelConfig | null {
+  try {
+    const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')
+    if (!value || !['deepseek', 'openai_compatible'].includes(value.provider)
+      || typeof value.api_key !== 'string' || typeof value.base_url !== 'string'
+      || typeof value.model_name !== 'string') return null
+    return value as ModelConfig
+  } catch { return null }
+}
+
+let activeConfig: ModelConfig | null = readSavedModelConfig()
+export function currentModelConfig(): ModelConfig | null { return activeConfig }
+export function setActiveModelConfig(config: ModelConfig | null, persist = false): void {
+  activeConfig = config
+  if (!persist) return
+  try {
+    if (config) localStorage.setItem(STORAGE_KEY, JSON.stringify(config))
+    else localStorage.removeItem(STORAGE_KEY)
+  } catch { /* Browser storage can be disabled; this run remains usable. */ }
+}
+
+export function modelRequestHeader(): Record<string, string> {
+  return activeConfig?.api_key ? { 'X-Myatom-Model-Config': JSON.stringify(activeConfig) } : {}
+}

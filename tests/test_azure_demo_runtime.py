@@ -14,18 +14,26 @@ from backend.settings import Settings
 
 
 def _settings(tmp_path: Path, **changes) -> Settings:
-    values = dict(data_dir=tmp_path, app_env="azure_demo", database_url="postgresql://test.invalid/myatom",
+    values = dict(data_dir=tmp_path, app_env="azure_demo",
+                  azure_sql_connection_string="Server=tcp:my-atom.database.windows.net,1433;Database=my-atom;Encrypt=yes;TrustServerCertificate=no",
                   workbench_origin="https://app.example.com", preview_base_domain="preview.example.net",
                   trusted_demo=True)
     values.update(changes)
     return Settings(**values)
 
 
-def test_azure_demo_fails_closed_without_persistent_mount(tmp_path: Path):
-    with pytest.raises(RuntimeError, match="Azure Files"):
-        _settings(tmp_path).validate_azure_demo()
-    with pytest.raises(RuntimeError, match="PostgreSQL"):
-        _settings(tmp_path, database_url="").validate_azure_demo()
+def test_azure_demo_accepts_local_container_data_without_mount(tmp_path: Path):
+    _settings(tmp_path).validate_azure_demo()
+    assert tmp_path.is_dir()
+
+
+def test_azure_demo_rejects_invalid_config(tmp_path: Path):
+    with pytest.raises(RuntimeError, match="Azure SQL"):
+        _settings(tmp_path, azure_sql_connection_string="").validate_azure_demo()
+    with pytest.raises(RuntimeError, match="加密连接"):
+        _settings(tmp_path, azure_sql_connection_string="Server=x;Database=y;Encrypt=no").validate_azure_demo()
+    with pytest.raises(RuntimeError, match="仅配置 Azure SQL"):
+        _settings(tmp_path, database_url="postgresql://test.invalid/myatom").validate_azure_demo()
     with pytest.raises(RuntimeError, match="HTTPS"):
         _settings(tmp_path, workbench_origin="http://app.example.com").validate_azure_demo()
     with pytest.raises(RuntimeError, match="预览域"):
@@ -33,7 +41,6 @@ def test_azure_demo_fails_closed_without_persistent_mount(tmp_path: Path):
 
 
 def test_azure_host_dispatch_preserves_project_preview_origins(tmp_path: Path, monkeypatch):
-    monkeypatch.setattr("backend.settings.os.path.ismount", lambda path: path == tmp_path)
     api, preview = FastAPI(), FastAPI()
 
     @api.get("/probe")
@@ -56,7 +63,7 @@ def test_azure_host_dispatch_preserves_project_preview_origins(tmp_path: Path, m
         assert client.get("/probe", headers={"Host": "unknown.example.net"}).status_code == 421
 
 
-def test_trusted_demo_runner_uses_persistent_data_path(tmp_path: Path):
+def test_trusted_demo_runner_uses_container_data_path(tmp_path: Path):
     settings = _settings(tmp_path)
     runner = LocalRunner(settings, None)
     target = runner.prepare(str(uuid4()), str(uuid4()))

@@ -13,8 +13,6 @@ from backend.postgres_store import PostgresConnection, PostgresStore
 from backend.preview_access import PostgresPreviewAccess
 from backend.settings import Settings
 from backend.api import create_app
-from backend.azure_demo import create_azure_demo_app
-from backend.preview_access import preview_host
 from ops.store import PostgresReadOnlyExceptionStore
 from tests.test_mvp1 import FakeModel, wait_status
 
@@ -158,36 +156,6 @@ def test_postgres_checkpoint_and_waiting_card_resume(pg_url: str, tmp_path: Path
         assert plan["card_id"] != waiting["card_id"]
         events = client.get(f"/api/runs/{run_id}/events").json()["events"]
         assert [event["seq"] for event in events] == list(range(1, len(events) + 1))
-
-
-def test_azure_demo_reopens_version_files_and_preview_after_restart(pg_url: str, tmp_path: Path, monkeypatch):
-    """Simulate the mounted path; real Azure Files mounting remains an AZ-03 gate."""
-    from urllib.parse import urlsplit
-
-    monkeypatch.setattr("backend.settings.os.path.ismount", lambda path: path == tmp_path)
-    settings = Settings(data_dir=tmp_path, app_env="azure_demo", database_url=pg_url, model_api_key="test-only",
-                        trusted_demo=True, workbench_origin="https://app.example.com",
-                        preview_base_domain="preview.example.net")
-    store = PostgresStore(pg_url)
-    with TestClient(create_azure_demo_app(settings, model=FakeModel()), base_url=settings.workbench_origin) as client:
-        project_id = client.post("/api/projects", json={"title": "Mounted file readback"}).json()["id"]
-        run, _ = store.create_run(project_id, "Create a small counter application", "azure-restart")
-        store.update_run(run["id"], status="completed", phase="Done")
-        dist = tmp_path / "artifacts" / project_id / run["id"] / "dist"
-        dist.mkdir(parents=True)
-        (dist / "index.html").write_text("<div id='root'>saved version</div>", encoding="utf-8")
-        version, _ = store.commit_version(project_id, run["id"], {"files": [], "build_files": []})
-        assert client.get(f"/api/versions/{version['id']}/preview").status_code == 200
-        cookie = client.cookies.get("myatom_guest")
-    with TestClient(create_azure_demo_app(settings, model=FakeModel()), base_url=settings.workbench_origin) as restarted:
-        restarted.cookies.set("myatom_guest", cookie)
-        response = restarted.get(f"/api/versions/{version['id']}/preview")
-        assert response.status_code == 200
-        preview_url = response.json()["url"]
-        assert urlsplit(preview_url).hostname == preview_host(project_id, settings.preview_base_domain)
-        opened = restarted.get(preview_url, follow_redirects=True)
-        assert opened.status_code == 200 and "saved version" in opened.text
-        assert restarted.get(f"/api/versions/{version['id']}/files/src/App.tsx").status_code == 404
 
 
 def test_ops_role_can_read_only_safe_views(pg_url: str):

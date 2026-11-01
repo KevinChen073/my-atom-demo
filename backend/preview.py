@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import re
-from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
 from .preview_access import PreviewAccess, preview_host
 from .settings import Settings
@@ -21,7 +20,13 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
         raise RuntimeError("当前环境不允许预览")
     settings.validate_azure_demo()
     domain = settings.preview_base_domain if settings.app_env == "azure_demo" else "localhost"
-    if settings.database_url:
+    if settings.azure_sql_connection_string:
+        from .azure_sql import AzureSqlStore
+        from .preview_access import AzureSqlPreviewAccess
+
+        store = AzureSqlStore(settings.azure_sql_connection_string)
+        access = AzureSqlPreviewAccess(settings.azure_sql_connection_string)
+    elif settings.database_url:
         from .postgres_store import PostgresStore
         from .preview_access import PostgresPreviewAccess
         store = PostgresStore(settings.database_url)
@@ -96,9 +101,9 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
             if exc.status_code != 401:
                 raise
             return expired_response()
-        root = (settings.data_dir / "artifacts" / version["project_id"] / version["run_id"] / "dist").resolve()
-        target = (root / (name or "index.html")).resolve()
-        if not target.is_relative_to(root) or not target.is_file():
+        try:
+            content, mime = store.get_version_file(version_id, "dist/" + (name or "index.html"))
+        except NotFound:
             raise HTTPException(status_code=404, detail="预览文件不存在")
         headers = {
             "Content-Security-Policy": (
@@ -111,10 +116,10 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
             "Cache-Control": "no-store",
             "Origin-Agent-Cluster": "?1",
         }
-        if target.name == "index.html":
-            html = target.read_text(encoding="utf-8").replace('="/assets/', '="./assets/')
+        if (name or "index.html") == "index.html":
+            html = content.replace('="/assets/', '="./assets/')
             return HTMLResponse(html, headers=headers)
-        return FileResponse(target, headers=headers)
+        return Response(content, media_type=mime, headers=headers)
 
     return app
 

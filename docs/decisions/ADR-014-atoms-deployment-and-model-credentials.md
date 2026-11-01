@@ -1,6 +1,7 @@
 # ADR-014：GitHub 源部署、Atoms 迁移与模型凭证方案
 
 - 状态：**Accepted（部署路线于 2026-11-01 经用户选择）**；尚未完成生产适配或 Azure 发布。
+- 模型凭证第 3、4 条已由 [ADR-025](ADR-025-browser-model-settings.md) 更新；旧的“不允许浏览器持久保存 Key”仅保留为历史决定。
 - 详细流程与验收：[GitHub 到 Atoms 部署方案](../ATOM-GITHUB-TO-DEPLOYMENT-PROPOSAL.md)。
 - 受约束基线：[PRD](../PRD.md)、[系统架构](../ARCHITECTURE.md)、[ADR-001](ADR-001-baseline.md)、[ADR-002](ADR-002-change-control.md)、[ADR-004](ADR-004-generated-deliverable-boundaries.md)。
 - 后续存储决定：[ADR-017](ADR-017-azure-persistent-state-and-artifacts.md) 已选 PostgreSQL 平台库和私有 Blob 交付文件；本 ADR 的路线选择继续有效。

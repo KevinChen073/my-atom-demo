@@ -12,13 +12,18 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .config import OpsSettings
-from .store import DatabaseUnavailable, InvalidCursor, ReadOnlyExceptionStore, PostgresReadOnlyExceptionStore
+from .store import (AzureSqlReadOnlyExceptionStore, DatabaseUnavailable, InvalidCursor,
+                    ReadOnlyExceptionStore, PostgresReadOnlyExceptionStore)
 
 
 def create_app(settings: OpsSettings | None = None) -> FastAPI:
     settings = settings or OpsSettings.from_env()
-    store = (PostgresReadOnlyExceptionStore(settings.database_url) if settings.database_url
-             else ReadOnlyExceptionStore(settings.db_path))
+    if settings.azure_sql_connection_string and settings.database_url:
+        raise ValueError("异常后台只能配置一个远程数据库")
+    store = (AzureSqlReadOnlyExceptionStore(settings.azure_sql_connection_string)
+             if settings.azure_sql_connection_string else
+             PostgresReadOnlyExceptionStore(settings.database_url) if settings.database_url else
+             ReadOnlyExceptionStore(settings.db_path))
     app = FastAPI(title="MYATOM Operations")
     app.state.store = store
 

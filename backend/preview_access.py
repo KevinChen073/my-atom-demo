@@ -104,3 +104,27 @@ class PostgresPreviewAccess(PreviewAccess):
             db.execute("INSERT INTO preview_sessions VALUES (?,?,?,?)",
                        (_hash(session), version_id, row["project_id"], expires))
         return session, row["project_id"]
+
+
+class AzureSqlPreviewAccess(PreviewAccess):
+    """Ticket state in the same Azure SQL database as platform records."""
+
+    def __init__(self, connection_string: str):
+        self.connection_string = connection_string
+        self.lock = threading.RLock()
+
+    def _conn(self):
+        from .azure_sql import azure_sql_connection
+        return azure_sql_connection(self.connection_string)
+
+    def consume_ticket(self, ticket: str, version_id: str) -> tuple[str, str] | None:
+        session, expires = secrets.token_urlsafe(32), _expiry(60)
+        with self.lock, self._conn() as db:
+            row = db.execute("""UPDATE preview_tickets SET used=1 OUTPUT inserted.project_id
+                WHERE token_hash=? AND version_id=? AND used=0 AND expires_at>?""",
+                (_hash(ticket), version_id, now())).fetchone()
+            if not row:
+                return None
+            db.execute("INSERT INTO preview_sessions VALUES (?,?,?,?)",
+                       (_hash(session), version_id, row["project_id"], expires))
+        return session, row["project_id"]

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import threading
 import time
 from typing import Any
 
@@ -11,6 +12,7 @@ from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, 
 from .budget import budget_reason, effective_limits
 from .settings import Settings
 from .store import Store
+from .model_credentials import ModelCredentials
 
 
 class BudgetExceeded(Exception):
@@ -36,6 +38,22 @@ class ModelGateway:
         self.settings = settings
         self.store = store
         self.client = OpenAI(api_key=settings.model_api_key or "not-configured", base_url=settings.model_base_url, timeout=120)
+        self._run_credentials: dict[str, ModelCredentials] = {}
+        self._credentials_lock = threading.Lock()
+
+    def configure_run(self, run_id: str, credentials: ModelCredentials) -> None:
+        self.store.operation_set(run_id, "user_model_config", {"provider": credentials.provider,
+            "base_url": credentials.base_url, "model_name": credentials.model_name, "needs_key": True})
+        with self._credentials_lock:
+            self._run_credentials[run_id] = credentials
+
+    def has_run_credentials(self, run_id: str) -> bool:
+        with self._credentials_lock:
+            return run_id in self._run_credentials
+
+    def release_run_credentials(self, run_id: str) -> None:
+        with self._credentials_lock:
+            self._run_credentials.pop(run_id, None)
 
     def check_limits(self, run_id: str) -> None:
         run = self.store.get_run(run_id)
@@ -58,8 +76,15 @@ class ModelGateway:
         cached = self.store.cache_get(run_id, node, cache_key)
         if cached is not None:
             return cached
-        if not self.settings.model_api_key:
-            raise RuntimeError("MODEL_API_KEY 未配置，请在本地 .env 中设置")
+        with self._credentials_lock:
+            credentials = self._run_credentials.get(run_id)
+        if credentials is None and self.store.operation_get(run_id, "user_model_config"):
+            raise RuntimeError("模型 Key 需要重新提供，请打开模型设置并刷新任务")
+        if credentials is None and not self.settings.model_api_key:
+            raise RuntimeError("请先在模型设置中填写 API Key")
+        client = (OpenAI(api_key=credentials.api_key, base_url=credentials.base_url, timeout=120)
+                  if credentials else self.client)
+        model_name = credentials.model_name if credentials else self.settings.model_name
         messages = [
             {"role": "system", "content": system + "\n请只输出一个合法的 JSON 对象，不要输出 Markdown。"},
             {"role": "user", "content": user},
@@ -69,6 +94,7 @@ class ModelGateway:
         # Plans have a strict JSON schema and a small output budget. Deep
         # reasoning can consume the entire allowance before JSON is emitted.
         reasoning_effort = self.settings.model_code_reasoning_effort if node in {"code_loop", "plan"} else self.settings.model_reasoning_effort
+        provider = credentials.provider if credentials else "deepseek"
         thinking_type = "disabled" if reasoning_effort == "none" else "enabled"
         for attempt in range(4):
             self.check_limits(run_id)
@@ -83,16 +109,12 @@ class ModelGateway:
             self.store.record_model_attempt(run_id, node)
             try:
                 remaining_seconds = max(0.1, run_seconds_limit - self.store.active_elapsed_seconds(run_id))
-                response = self.client.chat.completions.create(
-                    model=self.settings.model_name,
-                    messages=messages,
-                    stream=False,
-                    reasoning_effort=reasoning_effort,
-                    extra_body={"thinking": {"type": thinking_type}},
-                    response_format={"type": "json_object"},
-                    max_tokens=call_max_tokens,
-                    timeout=min(120, remaining_seconds),
-                )
+                options: dict[str, Any] = {"model": model_name, "messages": messages, "stream": False,
+                    "response_format": {"type": "json_object"}, "max_tokens": call_max_tokens,
+                    "timeout": min(120, remaining_seconds)}
+                if provider == "deepseek":
+                    options.update(reasoning_effort=reasoning_effort, extra_body={"thinking": {"type": thinking_type}})
+                response = client.chat.completions.create(**options)
                 choice = response.choices[0]
                 content = choice.message.content or ""
                 reported_tokens = response.usage.total_tokens if response.usage else 0

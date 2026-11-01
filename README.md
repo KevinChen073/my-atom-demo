@@ -10,7 +10,7 @@
 
 ## 本地运行（Windows PowerShell）
 
-需要 Python 3.11+、Node.js 22+、npm，以及一个可用的模型 API Key。项目根目录 `.env` 设置 `MODEL_API_KEY`；参考 `.env.example`，不要提交 `.env`。
+需要 Python 3.11+、Node.js 22+、npm，以及一个可用的模型 API Key。用户可在工作台“模型设置”中自行填写；本地也可在项目根目录 `.env` 设置 `MODEL_API_KEY` 作为输入框默认值。参考 `.env.example`，不要提交 `.env`。
 
 ```powershell
 cd D:\projects\my-atom-demo
@@ -44,7 +44,7 @@ cd ..
 
 打开 `http://127.0.0.1:8002`，输入管理员密钥后查看所有项目的异常。主应用停机时后台仍可查询已有记录，但不会产生新记录。本地两个进程共享同一 SQLite 文件；跨机器上线前须验证统一数据库服务或可靠共享卷、只读权限与正式管理员身份方案。后台默认只绑定本机，不能将当前密钥页面直接作为公网管理员系统。
 
-第一次生成时，Runner 从固定模板执行 `npm ci` 和 `npm run build`，会下载模板依赖。模型调用从服务端读取 `.env` 中的 `MODEL_API_KEY`；默认使用 DeepSeek 兼容接口 `https://api.deepseek.com`、模型 `deepseek-flash`。澄清/计划使用 high 思考，代码输出使用 `.env` 中的 `MODEL_CODE_REASONING_EFFORT=none`，避免生成源码前耗尽输出额度。密钥不会下发给浏览器或生成应用。
+第一次生成时，Runner 从固定模板执行 `npm ci` 和 `npm run build`，会下载模板依赖。工作台“模型设置”支持 DeepSeek 与 OpenAI 兼容 API。用户 Key 可保存在当前浏览器 localStorage，运行时发给主 API，主 API 仅在进程内存持有；本地 `.env` 的 `MODEL_API_KEY` 仅在本机访问时回填输入框。澄清/计划默认使用 high 思考，代码输出可用 `.env` 的 `MODEL_CODE_REASONING_EFFORT=none` 控制。参见 [ADR-025](docs/decisions/ADR-025-browser-model-settings.md)。
 
 ## 验证
 
@@ -69,11 +69,11 @@ npm run build
 
 ## 当前能力与边界
 
-- 本地默认用 SQLite 保存项目、运行、决策、事件、版本和 LangGraph checkpoint；设置服务端 `MYATOM_DATABASE_URL` 后可在本地开发模式改用 PostgreSQL，先显式运行 `python -m backend.migrate_postgres` 升级到 v2。Azure 受信演示使用 PostgreSQL 与挂载到 `/app/data` 的 Azure Files，构建也在主 API 容器；不搬迁本地历史数据。配置与验收见 [Azure 持久化](docs/AZURE-PERSISTENCE.md)。同一访客凭证可刷新/重进恢复项目。
+- 本地 SQLite 保存项目、运行、决策、事件、checkpoint、预览票据与完整交付版本文件，旧本地文件版在启动时校验并导入；Azure SQL 保存对应线上持久状态与版本文本。两端文件系统只作临时构建，不配置额外文件挂载；本地历史数据不搬迁到 Azure。Azure 实测尚未完成，不能宣称云端版本跨重启可用。见 [Azure 持久化](docs/AZURE-PERSISTENCE.md)、[ADR-023](docs/decisions/ADR-023-azure-sql-text-artifacts.md)和 [ADR-024](docs/decisions/ADR-024-sqlite-local-artifacts.md)。
 - 已有可用版本时，新需求自动从当前版本继承完整计划与源码快照；计划卡列出沿用、增加、调整或删除的功能，确认后优先修改指定文件。失败不会替换旧版。具体规则见 [ADR-019](docs/decisions/ADR-019-version-inheritance.md)。
 - 生成代码限固定 React+TS+Vite 模板：`src/App.tsx`、`src/app.css`、`src/hooks/useAppState.ts` 与根目录 `readme.md` 必需；额外组件在 `src/components/`、额外逻辑在 `src/hooks/`，最多 12 个生成文件。只有编译/类型等源码错误才自动修复，最多 60 轮；同错连续无进展或累计第 5 次出现会提前停止。
 - SSE 事件按游标回放。预览用短期票据打开已构建的真实应用，每项目使用稳定的独立 `.localhost` origin；生成应用的业务数据只在该预览域 `localStorage`。候选产物经构建及静态资源检查后才成为可用快照。每项目最多保留 5 版，回滚只持久切换当前版本指针；浏览器业务数据不随代码回滚。
 - V7 桌面壳包含新建项目首页、工作台、概览、文档、测试、发布六个 URL 视图。项目内四个状态页可直达并刷新恢复；同项目切页保留对话，跨项目切换先清除旧项目内容。当前视觉规则见 `design/design.md`、`design/token.json` 和 `web/src/v7.css`。
 - 桌面工作台的两条竖向分隔线可拖动，也可用方向键微调；布局宽度保存在当前浏览器的 localStorage。双击分隔线或点击侧栏“恢复默认布局”即可重置。
-- 本地和 Azure 受信演示的 Runner 与主 API 共享执行环境，不构成代码执行沙箱。Azure 模式必须限制入口为获授权人员，验证持久文件挂载、项目独立 HTTPS 预览域和重启读回；匿名公网用户生成需另建隔离 Runner。
+- 本地和 Azure 受信演示的 Runner 与主 API 共享执行环境，不构成代码执行沙箱。Azure 模式必须限制入口为获授权人员，验证 Azure SQL 版本文件、项目独立 HTTPS 预览域和重启读回；匿名公网用户生成需另建隔离 Runner。
 - 本仓库的 Git 远端地址为 [KevinChen073/my-atom-demo](https://github.com/KevinChen073/my-atom-demo.git)。当前文件由本地工作区管理，提交、推送和发布需另行授权。

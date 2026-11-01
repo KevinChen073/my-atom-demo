@@ -174,3 +174,62 @@ class PostgresReadOnlyExceptionStore(ReadOnlyExceptionStore):
                 yield wrapper
         except psycopg.Error as exc:
             raise DatabaseUnavailable from exc
+
+
+class _AzureSqlOpsConnection:
+    _views = _PostgresOpsConnection._views
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    def execute(self, query: str, parameters=()):
+        for table, view in self._views.items():
+            query = re.sub(rf"\b{table}\b", view, query)
+        values = tuple(parameters)
+        limit = re.search(r"\s+LIMIT\s+(\?|\d+)\s*$", query, re.I)
+        if limit:
+            cap = values[-1] if limit.group(1) == "?" else int(limit.group(1))
+            values = values[:-1] if limit.group(1) == "?" else values
+            query = re.sub(r"\bSELECT\b", "SELECT TOP (?)", query[:limit.start()], count=1, flags=re.I)
+            values = (cap,) + values
+        cursor = self.connection.cursor()
+        cursor.execute(query, values)
+        return _AzureSqlOpsCursor(cursor)
+
+
+class _AzureSqlOpsCursor:
+    def __init__(self, cursor):
+        self.cursor = cursor
+
+    def _row(self, row):
+        return dict(zip((column[0] for column in self.cursor.description), row)) if row is not None else None
+
+    def fetchone(self):
+        return self._row(self.cursor.fetchone())
+
+    def fetchall(self):
+        return [self._row(row) for row in self.cursor.fetchall()]
+
+
+class AzureSqlReadOnlyExceptionStore(ReadOnlyExceptionStore):
+    def __init__(self, connection_string: str):
+        sql = connection_string.lower()
+        if (not re.search(r"(?:^|;)\s*server\s*=", sql)
+                or not re.search(r"(?:^|;)\s*database\s*=", sql)
+                or not re.search(r"(?:^|;)\s*encrypt\s*=\s*(?:yes|true|mandatory)(?:;|$)", sql)
+                or not re.search(r"(?:^|;)\s*trustservercertificate\s*=\s*(?:no|false)(?:;|$)", sql)):
+            raise ValueError("OPS_AZURE_SQL_CONNECTION_STRING 必须使用加密并验证证书的 Azure SQL 连接")
+        self.connection_string = connection_string
+        self.path = None
+
+    @contextmanager
+    def connection(self):
+        import mssql_python
+
+        try:
+            with mssql_python.connect(self.connection_string, autocommit=True, timeout=30) as db:
+                wrapper = _AzureSqlOpsConnection(db)
+                wrapper.execute("SELECT 1 FROM exception_records LIMIT 1")
+                yield wrapper
+        except mssql_python.Error as exc:
+            raise DatabaseUnavailable from exc

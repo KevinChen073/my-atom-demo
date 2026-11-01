@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import re
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -20,7 +21,8 @@ class Settings:
     data_dir: Path = Path(os.getenv("MYATOM_DATA_DIR", str(ROOT / "data"))).resolve()
     app_env: str = os.getenv("APP_ENV", "local")
     database_url: str = field(default_factory=lambda: os.getenv("MYATOM_DATABASE_URL", ""), repr=False)
-    model_api_key: str = os.getenv("MODEL_API_KEY", "")
+    azure_sql_connection_string: str = field(default_factory=lambda: os.getenv("MYATOM_AZURE_SQL_CONNECTION_STRING", ""), repr=False)
+    model_api_key: str = field(default_factory=lambda: os.getenv("MODEL_API_KEY", ""), repr=False)
     model_name: str = os.getenv("MODEL_NAME", "deepseek-flash")
     model_base_url: str = os.getenv("MODEL_BASE_URL", "https://api.deepseek.com")
     model_reasoning_effort: str = os.getenv("MODEL_REASONING_EFFORT", "high")
@@ -35,23 +37,33 @@ class Settings:
     trusted_demo: bool = os.getenv("MYATOM_TRUSTED_DEMO", "") == "1"
 
     def validate_azure_demo(self) -> None:
-        """Fail closed before starting a container with persistent demo writes."""
+        """Validate the explicitly trusted, single-container Azure demo."""
         from urllib.parse import urlparse
 
         if self.app_env != "azure_demo":
             return
         origin = urlparse(self.workbench_origin)
         domain = self.preview_base_domain.lower().strip(".")
-        if not self.trusted_demo or not self.database_url:
-            raise RuntimeError("Azure 受信演示须显式启用并配置 PostgreSQL")
+        if not self.trusted_demo or not self.azure_sql_connection_string or self.database_url:
+            raise RuntimeError("Azure 受信演示须显式启用并仅配置 Azure SQL")
+        sql = self.azure_sql_connection_string.lower()
+        if (not re.search(r"(?:^|;)\s*server\s*=", sql)
+                or not re.search(r"(?:^|;)\s*database\s*=", sql)
+                or not re.search(r"(?:^|;)\s*encrypt\s*=\s*(?:yes|true|mandatory)(?:;|$)", sql)
+                or not re.search(r"(?:^|;)\s*trustservercertificate\s*=\s*(?:no|false)(?:;|$)", sql)):
+            raise RuntimeError("Azure SQL 须配置 Server、Database、加密连接和证书验证")
         if (origin.scheme != "https" or not origin.hostname or origin.netloc != origin.hostname
                 or origin.path not in {"", "/"} or origin.query or origin.fragment):
             raise RuntimeError("Azure 工作台必须配置 HTTPS 单一 origin")
         if (not re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)+", domain)
                 or origin.hostname == domain or origin.hostname.endswith("." + domain)):
             raise RuntimeError("预览域须与工作台分离，且配置可用的独立域名")
-        if not os.path.ismount(self.data_dir):
-            raise RuntimeError("Azure data/ 必须是已挂载的持久 Azure Files 卷")
+        try:
+            self.data_dir.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryFile(dir=self.data_dir):
+                pass
+        except OSError as exc:
+            raise RuntimeError("Azure 容器 data/ 目录不可写") from exc
 
     @property
     def app_db(self) -> Path:

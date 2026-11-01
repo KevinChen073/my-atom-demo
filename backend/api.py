@@ -6,6 +6,7 @@ import json
 import logging
 import secrets
 import uuid
+import ipaddress
 from contextlib import asynccontextmanager
 from typing import Any, Literal
 
@@ -14,12 +15,13 @@ from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, Str
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .runner import UnsafeSource
 from .messages import MessageService
 from .preview_access import PreviewAccess, preview_origin
 from .settings import Settings
 from .store import Conflict, NotFound, Store
 from .workflow import Workflow
+from .model import ModelGateway
+from .model_credentials import validate_model_credentials
 
 
 COOKIE = "myatom_guest"
@@ -75,7 +77,14 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     if settings.app_env not in {"local", "container_smoke", "azure_demo"}:
         raise RuntimeError("不支持的运行环境")
     settings.validate_azure_demo()
-    if settings.database_url:
+    if settings.azure_sql_connection_string:
+        if settings.app_env not in {"local", "azure_demo"}:
+            raise RuntimeError("当前运行环境不允许连接 Azure SQL")
+        from .azure_sql import AzureSqlStore
+        from .preview_access import AzureSqlPreviewAccess
+        store = AzureSqlStore(settings.azure_sql_connection_string)
+        preview_access = AzureSqlPreviewAccess(settings.azure_sql_connection_string)
+    elif settings.database_url:
         if settings.app_env not in {"local", "azure_demo"}:
             raise RuntimeError("当前运行环境不允许连接 PostgreSQL")
         from .postgres_store import PostgresStore
@@ -143,7 +152,30 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     def run_access(request: Request, run_id: str) -> dict[str, Any]:
         run = store.get_run(run_id)
         project_access(request, run["project_id"])
+        if request.method == "POST":
+            configure_run_from_request(request, run_id)
         return workflow.present_run(run)
+
+    def request_credentials(request: Request):
+        raw = request.headers.get("x-myatom-model-config")
+        if not raw:
+            return None
+        if len(raw) > 2048:
+            raise HTTPException(status_code=422, detail="模型配置过长")
+        try:
+            config = json.loads(raw)
+            if not isinstance(config, dict):
+                raise ValueError("模型配置格式无效")
+            return validate_model_credentials(config)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    def configure_run_from_request(request: Request, run_id: str) -> None:
+        credentials = request_credentials(request)
+        if credentials is None:
+            return
+        if isinstance(workflow.model, ModelGateway):
+            workflow.model.configure_run(run_id, credentials)
 
     def public_submission(message: dict[str, Any]) -> dict[str, Any]:
         return {key: value for key, value in message.items()
@@ -152,6 +184,38 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     @app.get("/api/health")
     def health():
         return {"ok": True, "model_configured": bool(settings.model_api_key), "app_env": settings.app_env}
+
+    @app.get("/api/model/defaults")
+    def model_defaults(request: Request):
+        local_client = False
+        try:
+            host = request.url.hostname or ""
+            local_host = host == "localhost" or ipaddress.ip_address(host).is_loopback
+            local_client = ipaddress.ip_address(request.client.host).is_loopback and local_host
+        except (ValueError, TypeError, AttributeError):
+            pass
+        return {"provider": "deepseek" if "api.deepseek.com" in settings.model_base_url else "openai_compatible",
+                "base_url": settings.model_base_url,
+                "model_name": settings.model_name, "api_key": settings.model_api_key if settings.app_env == "local" and local_client else ""}
+
+    @app.post("/api/model/test")
+    def test_model(request: Request):
+        raw = request.headers.get("x-myatom-model-config", "")
+        if not raw or len(raw) > 2048:
+            raise HTTPException(status_code=422, detail="请先填写模型设置")
+        try:
+            config = json.loads(raw)
+            credentials = validate_model_credentials(config)
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        from openai import OpenAI
+        try:
+            client = OpenAI(api_key=credentials.api_key, base_url=credentials.base_url, timeout=15)
+            client.chat.completions.create(model=credentials.model_name,
+                messages=[{"role": "user", "content": "Reply OK"}], max_tokens=8, timeout=15)
+        except Exception as exc:
+            raise HTTPException(status_code=502, detail=f"连接失败：{type(exc).__name__}") from None
+        return {"ok": True}
 
     @app.get("/api/projects")
     def list_projects(request: Request):
@@ -176,11 +240,13 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     @app.post("/api/projects/{project_id}/runs", status_code=201)
     def create_run(project_id: str, body: RunInput, request: Request, idempotency_key: str | None = Header(default=None)):
         project_access(request, project_id)
+        request_credentials(request)
         if not body.request_text.strip() or len(body.request_text.strip()) < 10:
             raise HTTPException(status_code=422, detail="请至少用 10 个字描述应用需求")
         run, created = store.create_run(project_id, body.request_text.strip(), idempotency_key or str(uuid.uuid4()),
             limits={"model_calls": settings.max_model_calls, "total_tokens": settings.max_total_tokens,
                     "run_seconds": settings.max_run_seconds, "fix_rounds": settings.max_fix_rounds}, mode=body.mode)
+        configure_run_from_request(request, run["id"])
         if created:
             workflow.enqueue(run["id"])
         return {"run": run, "created": created}
@@ -188,6 +254,15 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str, request: Request):
         return run_access(request, run_id)
+
+    @app.post("/api/runs/{run_id}/model")
+    def restore_run_model(run_id: str, request: Request):
+        run = run_access(request, run_id)
+        if not request.headers.get("x-myatom-model-config"):
+            raise HTTPException(status_code=422, detail="请先在模型设置中填写 API Key")
+        if run["status"] in {"clarifying", "planning", "building"}:
+            workflow.enqueue(run_id)
+        return {"ok": True}
 
     @app.get("/api/runs/{run_id}/messages")
     def list_messages(run_id: str, request: Request):
@@ -327,9 +402,14 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
                 raise Conflict(blocker)
         payload: dict[str, Any] = {}
         if body.action == "confirm_clarification":
+            duplicate = (store.get_decision_by_key(run_id, idempotency_key) if idempotency_key else None)
             card = run["card"] or {}
             answers: dict[str, str] = {}
-            for question in (card.get("payload") or {}).get("questions", []):
+            questions = ([{"id": question_id, "text": question_id, "required": True}
+                          for question_id in duplicate["payload"]["answers"]]
+                         if duplicate and duplicate["action"] == "confirm_clarification" else
+                         (card.get("payload") or {}).get("questions", []))
+            for question in questions:
                 if question["id"] not in (body.answers or {}):
                     raise HTTPException(status_code=422, detail=f"请明确回答或采用建议：{question['text']}")
                 answer = (body.answers or {})[question["id"]].strip()
@@ -388,8 +468,9 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
         project_access(request, version["project_id"])
         if settings.app_env not in {"local", "azure_demo"}:
             raise HTTPException(status_code=503, detail="当前环境尚无预览服务")
-        dist = workflow.runner.artifact(version["project_id"], version["run_id"]) / "dist" / "index.html"
-        if not dist.is_file():
+        try:
+            store.get_version_file(version_id, "dist/index.html")
+        except NotFound:
             raise HTTPException(status_code=404, detail="该版本尚无可预览的构建产物")
         ticket, expires = preview_access.issue_ticket(version_id, version["project_id"])
         origin = preview_origin(version["project_id"], settings.preview_port,
@@ -402,8 +483,8 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
         version = store.get_version(version_id)
         project_access(request, version["project_id"])
         try:
-            content = workflow.runner.read_artifact_file(version["project_id"], version["run_id"], name)
-        except (FileNotFoundError, ValueError, UnsafeSource):
+            content, _ = store.get_version_file(version_id, name)
+        except NotFound:
             raise HTTPException(status_code=404, detail="文件不存在")
         return PlainTextResponse(content)
 

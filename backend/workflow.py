@@ -256,7 +256,11 @@ class Workflow:
         self.model = model or ModelGateway(settings, store)
         self.runner = LocalRunner(settings, store)
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
-        if settings.database_url:
+        if settings.azure_sql_connection_string:
+            from .azure_sql_checkpoint import AzureSqlSaver
+            self.checkpointer = AzureSqlSaver(settings.azure_sql_connection_string)
+            self.checkpoint_connection = self.checkpointer
+        elif settings.database_url:
             import psycopg
             from psycopg.rows import dict_row
             from langgraph.checkpoint.postgres import PostgresSaver
@@ -482,7 +486,7 @@ class Workflow:
                 path = entry.get("path", "")
                 if not GENERATED_FILE.fullmatch(path):
                     continue
-                content = self.runner.read_artifact_file(state["project_id"], base["run_id"], path)
+                content, _ = self.store.get_version_file(base["id"], path)
                 if hashlib.sha256(content.encode("utf-8")).hexdigest() != entry.get("sha256"):
                     raise RuntimeError("上一版本源码校验失败，已停止迭代")
                 files[path] = content
@@ -693,7 +697,6 @@ class Workflow:
         self._check_cancel(run_id)
         self.store.update_run(run_id, phase="CommitVersion", event_type="phase", event_payload={"phase": "CommitVersion"})
         candidate = state["candidate"]
-        self.runner.commit_candidate(state["project_id"], run_id, candidate["digest"])
         manifest = {**candidate["manifest"], "preview": {"status": "checked", **state["preview_result"]}}
         run = self.store.get_run(run_id)
         inherited = (run.get("base_spec") or {}).get("requests") or ([run["base_spec"]["request_text"]] if run.get("base_spec") else [])
@@ -701,7 +704,9 @@ class Workflow:
                                       "plan": state["plan"]}
         manifest["base_version_id"] = run.get("base_version_id")
         self._check_cancel(run_id)
-        version, _ = self.store.commit_version(state["project_id"], run_id, manifest)
+        from .azure_artifacts import collect_candidate_files
+        files = collect_candidate_files(self.runner.candidate(state["project_id"], run_id, candidate["digest"]), manifest)
+        version, _ = self.store.commit_version_with_files(state["project_id"], run_id, manifest, files)
         self.store.update_run(run_id, status="completed", phase="Done", version_id=version["id"], card_json=dumps({
             "type": "test_result", "schema_version": 1, "card_id": str(uuid.uuid4()), "run_id": run_id,
             "status": "passed", "payload": {"version_id": version["id"], "build": manifest["build"], "files": manifest["files"],
@@ -771,6 +776,10 @@ class Workflow:
         """Give older terminal build failures the same evidence summary before opting in."""
         run = {**run, "active_elapsed_seconds": self.store.active_elapsed_seconds(run["id"]),
                "execution_running": bool(run.get("execution_started_at") and run["status"] in {"clarifying", "planning", "building"})}
+        run["needs_model_key"] = bool(isinstance(self.model, ModelGateway)
+            and self.store.operation_get(run["id"], "user_model_config")
+            and not self.model.has_run_credentials(run["id"])
+            and run["status"] in {"clarifying", "planning", "building"})
         card = run.get("card") or {}
         if (run["status"] == "failed" and self.store.latest_exception_code(run["id"]) == "model_output_invalid"):
             config = {"configurable": {"thread_id": run["id"]}}
@@ -1040,6 +1049,8 @@ class Workflow:
             # A decision may arrive after this worker entered the waiting node but
             # before it left the queue. In that case the API's enqueue was skipped.
             run = self.store.get_run(run_id)
+            if run["status"] in {"completed", "failed", "cancelled"} and isinstance(self.model, ModelGateway):
+                self.model.release_run_credentials(run_id)
             if run["status"] in {"clarifying", "planning", "building"} and (budget_paused or self.store.pending_decision(run_id)):
                 self.enqueue(run_id)
 
@@ -1064,6 +1075,10 @@ class Workflow:
                     event_type="failed", event_payload={"reason": "plan_incompatible"})
         self._cleanup_artifacts()
         for run in self.store.get_recoverable_runs():
+            if (isinstance(self.model, ModelGateway)
+                    and self.store.operation_get(run["id"], "user_model_config")
+                    and not self.model.has_run_credentials(run["id"])):
+                continue
             self.enqueue(run["id"])
 
     def _cleanup_artifacts(self) -> None:

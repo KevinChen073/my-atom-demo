@@ -1,6 +1,6 @@
 # ADR-020：Azure Files `data/` 与受信演示运行模式
 
-- 状态：Accepted（2026-11-01，用户明确选择“Azure Files 挂载到 data/，构建也在主 API 容器；仅限受信演示环境”）
+- 状态：部分修订；数据库与 checkpoint 条款由 [ADR-021](ADR-021-azure-sql-platform-state.md) 修订，Azure Files、挂载门禁和文件恢复条款最终由 [ADR-023](ADR-023-azure-sql-text-artifacts.md) 取代（2026-11-01）。以下保留原决定供追溯；同容器构建与受信访问边界仍有效。
 - 取代：[ADR-017](ADR-017-azure-persistent-state-and-artifacts.md) 中的 Blob 与隔离 Runner 方案
 - 关联：[PRD](../PRD.md)、[架构](../ARCHITECTURE.md)、[部署说明](../AZURE-PERSISTENCE.md)、[验收](../../tests/cases/DEPLOYMENT-AZURE.md)
 

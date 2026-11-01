@@ -1,5 +1,5 @@
 # Defaults to health-only smoke mode. APP_ENV=azure_demo enables a trusted
-# single-container demo only when PostgreSQL and a persistent data mount exist.
+# single-container demo; /app/data is a temporary build workspace.
 FROM node:22-bookworm-slim AS web-build
 WORKDIR /build/web
 COPY web/package.json web/package-lock.json ./
@@ -16,7 +16,10 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     MYATOM_DATA_DIR=/app/data
 WORKDIR /app
 COPY requirements.txt requirements-azure.txt ./
-RUN pip install --no-cache-dir -r requirements-azure.txt \
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends libltdl7 libkrb5-3 libgssapi-krb5-2 \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir -r requirements-azure.txt \
     && groupadd --system myatom \
     && useradd --system --gid myatom --home-dir /app myatom \
     && mkdir /app/data \

@@ -137,13 +137,16 @@ def test_failed_preview_candidate_keeps_last_good_version(tmp_path: Path):
         app.state.store.update_run(old_run["id"], status="completed", phase="Done", plan_json=APPROVED_PLAN)
         files = FakeModel().generate(old_run["id"], "code_loop", "seed", "", "")["files"]
         entries = []
-        for name, content in files.items():
-            target = tmp_path / "artifacts" / project_id / old_run["id"] / name
-            target.parent.mkdir(parents=True, exist_ok=True)
+        rows = []
+        for name, content in {**files, "dist/index.html": "<main>old version</main>"}.items():
             data = content.encode("utf-8")
-            target.write_bytes(data)
-            entries.append({"path": name, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)})
-        old_version, _ = app.state.store.commit_version(project_id, old_run["id"], {"files": entries, "build": {"ok": True}})
+            entry = {"path": name, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+            rows.append({"path": name, "content": content, "utf8_bytes": len(data), "sha256": entry["sha256"],
+                         "kind": "dist" if name.startswith("dist/") else "source", "mime_type": "text/plain"})
+            entries.append(entry)
+        old_version, _ = app.state.store.commit_version_with_files(project_id, old_run["id"],
+            {"files": [e for e in entries if not e["path"].startswith("dist/")],
+             "build_files": [e for e in entries if e["path"].startswith("dist/")], "build": {"ok": True}}, rows)
         response = client.post(f"/api/projects/{project_id}/runs", json={"request_text": "做一个可以点击加一的新计数器应用"})
         assert response.status_code == 201
         run_id = response.json()["run"]["id"]
@@ -192,11 +195,18 @@ def test_browser_preview_origin_is_stable_within_project_and_isolated_across_pro
     def seed(project_id: str, number: int) -> str:
         run, _ = store.create_run(project_id, f"版本 {number} 的预览应用", f"{project_id}-{number}")
         store.update_run(run["id"], status="completed", phase="Done", plan_json=APPROVED_PLAN)
-        version = store.save_version(project_id, run["id"], {"files": [], "build": {"ok": True}})
-        root = tmp_path / "artifacts" / project_id / run["id"] / "dist"
-        (root / "assets").mkdir(parents=True)
-        (root / "index.html").write_text('<div id="root"></div><script src="./assets/app.js"></script>', encoding="utf-8")
-        (root / "assets" / "app.js").write_text("document.getElementById('root').textContent = localStorage.getItem('demo') || 'empty'", encoding="utf-8")
+        contents = {"src/App.tsx": "export default function App(){return null}",
+                    "dist/index.html": '<div id="root"></div><script src="./assets/app.js"></script>',
+                    "dist/assets/app.js": "document.getElementById('root').textContent = localStorage.getItem('demo') || 'empty'"}
+        rows, source_entries, build_entries = [], [], []
+        for name, content in contents.items():
+            data = content.encode("utf-8")
+            entry = {"path": name, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}
+            rows.append({"path": name, "content": content, "utf8_bytes": len(data), "sha256": entry["sha256"],
+                         "kind": "dist" if name.startswith("dist/") else "source", "mime_type": "text/html" if name.endswith(".html") else "application/javascript" if name.endswith(".js") else "text/plain"})
+            (build_entries if name.startswith("dist/") else source_entries).append(entry)
+        version, _ = store.commit_version_with_files(project_id, run["id"],
+            {"files": source_entries, "build_files": build_entries, "build": {"ok": True}}, rows)
         return version["id"]
 
     first, second, other = seed(project_a["id"], 1), seed(project_a["id"], 2), seed(project_b["id"], 1)

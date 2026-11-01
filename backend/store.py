@@ -98,6 +98,13 @@ class Store:
                     id TEXT PRIMARY KEY, project_id TEXT NOT NULL, run_id TEXT NOT NULL UNIQUE,
                     manifest_json TEXT NOT NULL, created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS version_files (
+                    version_id TEXT NOT NULL REFERENCES versions(id) ON DELETE CASCADE,
+                    relative_path TEXT NOT NULL, text_content TEXT NOT NULL,
+                    utf8_bytes INTEGER NOT NULL, sha256 TEXT NOT NULL,
+                    kind TEXT NOT NULL, mime_type TEXT NOT NULL,
+                    PRIMARY KEY(version_id, relative_path)
+                );
                 CREATE TABLE IF NOT EXISTS artifact_cleanup (
                     project_id TEXT NOT NULL, run_id TEXT NOT NULL,
                     PRIMARY KEY(project_id, run_id)
@@ -163,6 +170,7 @@ class Store:
                     db.execute("DELETE FROM versions WHERE id=?", (old["id"],))
                     db.execute("INSERT OR IGNORE INTO artifact_cleanup VALUES (?,?)", (project[0], old["run_id"]))
         self._backfill_build_checks()
+        self._import_legacy_artifacts()
 
     def _conn(self) -> sqlite3.Connection:
         db = sqlite3.connect(self.path, timeout=30)
@@ -690,6 +698,11 @@ class Store:
         with self._conn() as db:
             return self._dict(db.execute("SELECT * FROM decisions WHERE id=?", (decision_id,)).fetchone())
 
+    def get_decision_by_key(self, run_id: str, key: str) -> dict[str, Any] | None:
+        with self._conn() as db:
+            return self._dict(db.execute("SELECT * FROM decisions WHERE run_id=? AND idempotency_key=?",
+                                         (run_id, key)).fetchone())
+
     def pending_decision(self, run_id: str) -> dict[str, Any] | None:
         with self._conn() as db:
             return self._dict(db.execute("SELECT * FROM decisions WHERE run_id=? AND processed=0 ORDER BY created_at LIMIT 1", (run_id,)).fetchone())
@@ -724,6 +737,84 @@ class Store:
                 removed_runs.append(old["run_id"])
             self._append_event(db, run_id, "version_saved", {"version_id": version_id, "files": manifest.get("files", [])})
         return self.get_version(version_id), removed_runs
+
+    def commit_version_with_files(self, project_id: str, run_id: str, manifest: dict[str, Any],
+                                  files: list[dict[str, Any]]) -> tuple[dict[str, Any], list[str]]:
+        """Atomically save a complete SQLite snapshot before exposing its pointer."""
+        from .azure_artifacts import validate_snapshot_files
+
+        validate_snapshot_files(manifest, files)
+        removed_runs: list[str] = []
+        with self.lock, self._conn() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute("SELECT * FROM versions WHERE run_id=?", (run_id,)).fetchone()
+            if existing:
+                return self._dict(existing), removed_runs
+            run = db.execute("SELECT base_version_id FROM runs WHERE id=? AND project_id=?", (run_id, project_id)).fetchone()
+            current = db.execute("SELECT active_version_id FROM projects WHERE id=?", (project_id,)).fetchone()
+            if not run or not current or run["base_version_id"] != current["active_version_id"]:
+                raise Conflict("当前版本已变化，请以最新版本开始新一轮")
+            version_id = str(uuid.uuid4())
+            db.execute("INSERT INTO versions (id, project_id, run_id, manifest_json, created_at) VALUES (?,?,?,?,?)",
+                       (version_id, project_id, run_id, dumps(manifest), now()))
+            db.executemany("INSERT INTO version_files VALUES (?,?,?,?,?,?,?)",
+                           [(version_id, row["path"], row["content"], row["utf8_bytes"], row["sha256"],
+                             row["kind"], row["mime_type"]) for row in files])
+            db.execute("UPDATE runs SET version_id=?, updated_at=? WHERE id=?", (version_id, now(), run_id))
+            db.execute("UPDATE projects SET active_version_id=?, updated_at=? WHERE id=?", (version_id, now(), project_id))
+            versions = db.execute("SELECT id, run_id FROM versions WHERE project_id=? ORDER BY rowid", (project_id,)).fetchall()
+            for old in versions[:max(0, len(versions) - 5)]:
+                if old["id"] == version_id:
+                    continue
+                db.execute("DELETE FROM versions WHERE id=?", (old["id"],))
+                db.execute("INSERT OR IGNORE INTO artifact_cleanup VALUES (?,?)", (project_id, old["run_id"]))
+                removed_runs.append(old["run_id"])
+            self._append_event(db, run_id, "version_saved", {"version_id": version_id, "files": manifest["files"]})
+        return self.get_version(version_id), removed_runs
+
+    def get_version_file(self, version_id: str, name: str) -> tuple[str, str]:
+        from .azure_artifacts import valid_snapshot_path, verify_stored_file
+
+        if not valid_snapshot_path(name):
+            raise NotFound("版本文件不存在")
+        with self._conn() as db:
+            row = db.execute("SELECT text_content, utf8_bytes, sha256, mime_type FROM version_files "
+                             "WHERE version_id=? AND relative_path=?", (version_id, name)).fetchone()
+        if row is None:
+            raise NotFound("版本文件不存在")
+        return verify_stored_file(dict(row)), row["mime_type"]
+
+    def _import_legacy_artifacts(self) -> None:
+        """Import retained disk snapshots once; the database becomes authoritative."""
+        from .azure_artifacts import collect_candidate_files
+
+        with self.lock, self._conn() as db:
+            rows = db.execute("SELECT id, project_id, run_id, manifest_json FROM versions "
+                              "WHERE NOT EXISTS (SELECT 1 FROM version_files WHERE version_id=versions.id)").fetchall()
+            for row in rows:
+                root = self.path.parent / "artifacts" / row["project_id"] / row["run_id"]
+                if not root.exists():
+                    continue
+                manifest = json.loads(row["manifest_json"])
+                if "build_files" not in manifest:
+                    # Early local snapshots recorded source hashes but kept
+                    # only built files on disk. Reconstruct and verify those
+                    # bytes before making SQLite the authority.
+                    build_files = []
+                    for path in sorted((root / "dist").rglob("*")):
+                        if not path.is_file():
+                            continue
+                        data = path.read_bytes()
+                        build_files.append({"path": path.relative_to(root).as_posix(),
+                                            "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)})
+                    manifest["build_files"] = build_files
+                files = collect_candidate_files(root, manifest)
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("UPDATE versions SET manifest_json=? WHERE id=?", (dumps(manifest), row["id"]))
+                db.executemany("INSERT INTO version_files VALUES (?,?,?,?,?,?,?)",
+                               [(row["id"], item["path"], item["content"], item["utf8_bytes"], item["sha256"],
+                                 item["kind"], item["mime_type"]) for item in files])
+                db.commit()
 
     def save_version(self, project_id: str, run_id: str, manifest: dict[str, Any]) -> dict[str, Any]:
         version, _ = self.commit_version(project_id, run_id, manifest)

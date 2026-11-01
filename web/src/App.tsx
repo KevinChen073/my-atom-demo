@@ -5,6 +5,9 @@ import { RunProgress } from './RunProgress'
 import { BudgetExtensionCard } from './BudgetExtensionCard'
 import type { BudgetChoice, BudgetData, BudgetKind } from './BudgetExtensionCard'
 import { withRunElapsed } from './runElapsed'
+import { ModelSettings } from './ModelSettings'
+import { currentModelConfig, modelRequestHeader } from './modelConfigStore'
+import type { ModelConfig } from './modelConfigStore'
 import catalog from '../../examples/catalog.json'
 import brandLockup from '../../design/v3/icons/brand-lockup.svg'
 import brandMark from '../../design/v3/icons/brand-mark.svg'
@@ -24,7 +27,7 @@ type FileInfo = { path: string; sha256: string; bytes: number }
 type BuildStep = { command: string; exit_code: number; seconds: number }
 type FailureSummary = { stage?: 'source_validation' | 'build'; cause: string; latest_error: string; command: string; automatic_repairs: number; total_attempts?: number; attempts: { number: number; command: string; error: string }[]; evidence_ref: string }
 type Card = { type: string; schema_version: number; card_id: string; run_id: string; status: string; payload: Clarification & Plan & Partial<BudgetData> & { version_id?: string; build?: { ok: boolean; steps: BuildStep[] }; files?: FileInfo[]; browser_check?: string; diagnostics?: string; diagnostics_ref?: string; diagnosis?: { category: string; command: string; evidence_ref: string; repairable: boolean; reason: string }; failure_summary?: FailureSummary; failure_stage?: 'plan' | 'source_validation' | 'build'; failure_reason_code?: string; recovery_blocker?: string; manual_rounds?: number }; actions: string[] }
-type Run = { id: string; project_id: string; request_text: string; status: string; phase: string; card: Card | null; card_id: string | null; spec_version: number; approved_spec_version: number | null; plan?: Plan | null; model_calls: number; tokens_used: number; fix_rounds: number; error: string | null; version_id: string | null; trace_id: string; created_at: string; updated_at: string; active_elapsed_seconds?: number | null; execution_running?: boolean | null; active_seconds?: number | null; execution_started_at?: string | null; elapsed_received_at?: number }
+type Run = { id: string; project_id: string; request_text: string; status: string; phase: string; card: Card | null; card_id: string | null; spec_version: number; approved_spec_version: number | null; plan?: Plan | null; model_calls: number; tokens_used: number; fix_rounds: number; error: string | null; version_id: string | null; trace_id: string; created_at: string; updated_at: string; active_elapsed_seconds?: number | null; execution_running?: boolean | null; needs_model_key?: boolean; active_seconds?: number | null; execution_started_at?: string | null; elapsed_received_at?: number }
 type Version = { id: string; project_id: string; run_id: string; manifest: { files: FileInfo[]; build: { ok: boolean; steps: BuildStep[] }; template: string; preview: { status: string } | null; entities?: PlanEntity[] }; created_at: string }
 type Decision = { id: string; run_id: string; card_id: string; spec_version: number; action: string; payload: { answers?: Record<string, string>; request_text?: string; feedback?: string } & Partial<Record<BudgetKind, number>>; created_at: string }
 type Submission = { id: string; run_id: string; card_id: string; spec_version: number; text: string; answers: Record<string, string>; status: 'interpreting' | 'needs_clarification' | 'committed' | 'rejected'; reply: string; committed_action: string | null; decision_id: string | null; created_at: string }
@@ -159,7 +162,9 @@ function FailureSummaryView({ summary }: { summary: FailureSummary }) {
 }
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api${path}`, { credentials: 'same-origin', ...init, headers: { 'Content-Type': 'application/json', ...(init?.headers || {}) } })
+  const modelHeader = init?.method === 'POST' && (/^\/projects\/[^/]+\/runs$/.test(path) || /^\/runs\/[^/]+\//.test(path))
+    ? modelRequestHeader() : {}
+  const response = await fetch(`/api${path}`, { credentials: 'same-origin', ...init, headers: { 'Content-Type': 'application/json', ...modelHeader, ...(init?.headers || {}) } })
   if (!response.ok) {
     let detail = `请求失败（${response.status}）`
     try { detail = (await response.json()).detail || detail } catch { /* response may be empty */ }
@@ -184,6 +189,7 @@ function App() {
   const initialRoute = parseRoute(location.pathname)
   const initialId = initialRoute.id
   const [projectId, setProjectId] = useState<string | null>(initialId)
+  const [modelConfig, setModelConfig] = useState<ModelConfig | null>(currentModelConfig())
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [listLoading, setListLoading] = useState(true)
   const [listError, setListError] = useState('')
@@ -254,6 +260,10 @@ function App() {
   const drawerReturnFocus = useRef<HTMLElement | null>(null)
   const rightHeadingRef = useRef<HTMLHeadingElement | null>(null)
   const run = project?.runs[0] || null
+  useEffect(() => {
+    if (!run || !modelConfig?.api_key || !['clarifying', 'planning', 'building'].includes(run.status)) return
+    api(`/runs/${run.id}/model`, { method: 'POST' }).catch(reason => setError((reason as Error).message))
+  }, [run?.id, run?.status, modelConfig])
   const turns = run ? conversationTurns(events, (project?.decisions || []).filter(item => item.run_id === run.id), messages, run) : []
   const originalRequest = String(events.find(item => item.type === 'run_created')?.payload.request_text || run?.request_text || '')
   const documentRun = run?.plan ? run : project?.runs.find(item => item.approved_spec_version && item.plan) || null
@@ -684,6 +694,7 @@ function App() {
   async function create() {
     if (busy) return
     setError('')
+    if (!modelConfig?.api_key) { setError('请先在顶部的模型设置中填写 API Key。'); return }
     if (requestText.trim().length < 10) { setError('请至少用 10 个字描述应用需求。'); return }
     setBusy(true)
     try {
@@ -706,6 +717,7 @@ function App() {
 
   async function submitNewRun() {
     if (!project || busy) return
+    if (!modelConfig?.api_key) { setError('请先在顶部的模型设置中填写 API Key。'); return }
     if (requestText.trim().length < 10) { setError('请至少用 10 个字描述新需求。'); return }
     setBusy(true); setError('')
     try {
@@ -863,16 +875,17 @@ function App() {
 
     <main id="project-main" className={`main ${!projectId ? 'home-main' : ''}`}>
       {!projectId ? <>
-        <header className="topbar"><div className="topbar-main"><button className="projects-toggle" onClick={openProjects} aria-label="打开项目列表">☰ <span>项目</span></button><strong>{homeView === 'new' ? '新建项目' : '所有项目'}</strong></div></header>
+        <header className="topbar"><div className="topbar-main"><button className="projects-toggle" onClick={openProjects} aria-label="打开项目列表">☰ <span>项目</span></button><strong>{homeView === 'new' ? '新建项目' : '所有项目'}</strong></div><div className="top-actions"><ModelSettings onChange={setModelConfig} /></div></header>
         {homeView === 'new' ? <div className="welcome v7-home">
           <h1 aria-label="今天想做什么？"><span aria-hidden="true">{heroText}</span><span className="typing-caret" aria-hidden="true" /></h1>
           <section className="start-project" aria-label="新项目需求"><div className="form-card"><label className="sr-only" htmlFor="project-request">描述你想创建的应用</label><textarea id="project-request" value={requestText} onChange={event => { setRequestText(event.target.value); editExampleDraft() }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void create() } }} placeholder="例如：做一个可以安排番茄钟的待办应用…" maxLength={5000} rows={3} /><div className="start-bottom"><span className="request-count">{requestText.length}/5000</span><button className="primary" disabled={busy} onClick={create}>{busy ? '正在创建…' : '创建项目　→'}</button></div><details className="project-title-option"><summary>添加项目名称（可选）</summary><label htmlFor="project-title">项目名称</label><input id="project-title" value={title} onChange={event => { setTitle(event.target.value); editExampleDraft() }} placeholder="给项目起个名字" maxLength={100} /></details><div className="example-feedback" role="status" aria-live="polite">{exampleFeedback}</div></div></section>
           <section className="examples-panel" aria-labelledby="examples-heading"><h2 id="examples-heading">试试这些精选样例</h2><div className="example-list">{catalog.examples.map(example => <button type="button" className={`example-card ${selectedExampleId === example.id ? 'selected' : ''}`} aria-pressed={selectedExampleId === example.id} key={example.id} onClick={() => applyExample(example)}><strong>{example.title}</strong><span>{example.subtitle}</span><em>{selectedExampleId === example.id ? '✓ 已填入' : '↗'}</em></button>)}</div><p className="examples-note">样例只填入需求草稿，创建前仍可编辑。</p></section>
         </div> : <div className="welcome v7-projects"><section className="home-projects" aria-labelledby="home-projects-heading"><div className="home-projects-head"><div><span className="section-kicker">PROJECTS / 你的工作</span><h1 id="home-projects-heading">所有项目</h1><p>继续未完成的任务，或查看已保存的成果。</p></div><label className="home-search"><span className="sr-only">搜索项目</span><input value={homeSearch} onChange={event => setHomeSearch(event.target.value)} placeholder="搜索项目" /></label></div><div className="project-table"><div className="project-table-head"><span>项目</span><span>当前状态</span><span>最近版本</span><span>更新时间</span></div>{visibleHomeProjects.map(item => <button key={item.id} className="project-table-row" onClick={() => navigate(item.id)}><span className="project-title-cell"><span className="project-icon" aria-hidden="true">{projectGlyph(item.title)}</span><span><strong>{item.title}</strong><small>Web 应用项目</small></span></span><span>{item.latest_status ? STATUS[item.latest_status] || item.latest_status : '尚未开始'}</span><span>{item.latest_version_id ? `#${item.latest_version_id.slice(0, 8)}` : '—'}</span><span>{formatTime(item.updated_at)}　→</span></button>)}{!visibleHomeProjects.length && <div className="project-table-empty">{listLoading ? '正在加载项目…' : listError ? <>项目列表暂不可用：{listError} <button onClick={() => refreshList().catch(() => undefined)}>重试</button></> : homeSearch ? '没有匹配的项目。' : '还没有项目。写下第一条需求开始。'}</div>}</div><button className="secondary" onClick={startNewProject}>＋ 新建项目</button></section></div>}
       </> : <>
-        <header className="topbar project-topbar"><div className="topbar-main"><button className="projects-toggle" onClick={openProjects} aria-label="打开项目列表">☰ <span>项目</span></button><span className="identity-kicker">当前项目</span><button ref={switcherButtonRef} className="top-project-switch" aria-haspopup="dialog" aria-expanded={switcherOpen} onClick={() => setSwitcherOpen(value => !value)}>{project?.title || '正在加载项目'} <span aria-hidden="true">⌄</span></button><span className={`status-pill ${run?.status || ''}`}>{run ? STATUS[run.status] || run.status : version ? `代码已保存 · #${version.id.slice(0, 8)}` : '等待需求'}</span></div><div className="top-actions">{(version || run?.plan || run?.card?.type === 'build_plan' || rightVisible) && <button onClick={() => { if (rightVisible) setRightMode('closed'); else if (!version) selectRightView('documents'); else setRightMode('open') }} aria-expanded={rightVisible} aria-controls="results-pane">{rightVisible ? '收起右侧' : version ? '查看应用' : '查看计划文档'}</button>}<button onClick={layout.reset} disabled={!layout.enabled}>恢复默认布局</button><span className="top-status" aria-live="polite"><small>{syncState === 'disconnected' ? '连接中断 · 任务可能仍在运行' : syncState === 'syncing' ? '正在同步服务端状态' : `已保存 ${formatTime(project?.updated_at)} · ${streamState === 'live' ? '实时连接' : streamState === 'polling' ? '定时更新' : streamState === 'connecting' ? '正在恢复连接' : '状态已同步'}`}</small></span></div></header>
+        <header className="topbar project-topbar"><div className="topbar-main"><button className="projects-toggle" onClick={openProjects} aria-label="打开项目列表">☰ <span>项目</span></button><span className="identity-kicker">当前项目</span><button ref={switcherButtonRef} className="top-project-switch" aria-haspopup="dialog" aria-expanded={switcherOpen} onClick={() => setSwitcherOpen(value => !value)}>{project?.title || '正在加载项目'} <span aria-hidden="true">⌄</span></button><span className={`status-pill ${run?.status || ''}`}>{run ? STATUS[run.status] || run.status : version ? `代码已保存 · #${version.id.slice(0, 8)}` : '等待需求'}</span></div><div className="top-actions"><ModelSettings onChange={setModelConfig} />{(version || run?.plan || run?.card?.type === 'build_plan' || rightVisible) && <button onClick={() => { if (rightVisible) setRightMode('closed'); else if (!version) selectRightView('documents'); else setRightMode('open') }} aria-expanded={rightVisible} aria-controls="results-pane">{rightVisible ? '收起右侧' : version ? '查看应用' : '查看计划文档'}</button>}<button onClick={layout.reset} disabled={!layout.enabled}>恢复默认布局</button><span className="top-status" aria-live="polite"><small>{syncState === 'disconnected' ? '连接中断 · 任务可能仍在运行' : syncState === 'syncing' ? '正在同步服务端状态' : `已保存 ${formatTime(project?.updated_at)} · ${streamState === 'live' ? '实时连接' : streamState === 'polling' ? '定时更新' : streamState === 'connecting' ? '正在恢复连接' : '状态已同步'}`}</small></span></div></header>
         {accessError ? <div className="empty-state" role="alert"><div className="empty-number">!</div><h3>无法打开此项目</h3><p>项目不存在，或当前访客没有访问权限。请检查项目链接与访问凭证。</p><button className="primary" onClick={() => navigate(null)}>返回首页</button></div> : <>
         {(syncState === 'disconnected' || streamState === 'polling') && <div className="connection-banner" role="status"><span>{syncState === 'disconnected' ? `无法同步最新状态；上次同步 ${formatTime(lastSynced || undefined)}。任务可能仍在运行。` : '实时连接中断，正在用定时更新补齐活动。'}</span><button onClick={() => { setSyncState('syncing'); setStreamRetryKey(value => value + 1); refreshProject(projectId).catch(() => setSyncState('disconnected')) }}>重新连接</button></div>}
+        {run?.needs_model_key && !modelConfig?.api_key && <div className="connection-banner" role="status">任务在等待模型 Key。请在顶部「模型设置」中保存 Key，页面会继续当前任务。</div>}
         <div className="mobile-tabs" aria-label="项目视图"><button className={mobileTab === 'process' ? 'active' : ''} aria-pressed={mobileTab === 'process'} onClick={() => setMobileTab('process')}>过程</button><button className={mobileTab === 'results' ? 'active' : ''} aria-pressed={mobileTab === 'results'} onClick={() => setMobileTab('results')}>结果</button></div>
         <section className={`workspace ${mobileTab === 'results' ? 'show-results' : ''} ${!rightVisible ? 'right-collapsed' : ''}`}>
           <div id="conversation-pane" className="conversation">

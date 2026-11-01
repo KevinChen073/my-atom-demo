@@ -19,6 +19,7 @@ class OpsSettings:
     admin_key: str
     static_dir: Path
     database_url: str = field(default="", repr=False)
+    azure_sql_connection_string: str = field(default="", repr=False)
     host: str = "127.0.0.1"
     port: int = 8002
 
@@ -30,6 +31,7 @@ class OpsSettings:
             admin_key=os.getenv("OPS_ADMIN_KEY", ""),
             static_dir=ROOT / "ops-web" / "dist",
             database_url=os.getenv("OPS_DATABASE_URL", ""),
+            azure_sql_connection_string=os.getenv("OPS_AZURE_SQL_CONNECTION_STRING", ""),
             host=os.getenv("OPS_HOST", "127.0.0.1"),
             port=int(os.getenv("OPS_PORT", "8002")),
         )
