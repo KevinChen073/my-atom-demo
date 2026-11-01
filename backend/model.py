@@ -1,19 +1,24 @@
 from __future__ import annotations
 
 import json
+import math
 import random
 import time
-from datetime import datetime
 from typing import Any
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
 
+from .budget import budget_reason, effective_limits
 from .settings import Settings
 from .store import Store
 
 
 class BudgetExceeded(Exception):
-    pass
+    def __init__(self, kind: str, *, observed: int, limit: int):
+        self.kind = kind
+        self.observed = observed
+        self.limit = limit
+        super().__init__(budget_reason(kind, observed, limit))
 
 
 class RunCancelled(Exception):
@@ -21,7 +26,9 @@ class RunCancelled(Exception):
 
 
 class ModelOutputError(Exception):
-    pass
+    def __init__(self, message: str, *, reason_code: str = "invalid_output"):
+        self.reason_code = reason_code
+        super().__init__(message)
 
 
 class ModelGateway:
@@ -32,15 +39,20 @@ class ModelGateway:
 
     def check_limits(self, run_id: str) -> None:
         run = self.store.get_run(run_id)
+        limits = effective_limits(run)
         if run["cancel_requested"]:
             raise RunCancelled("任务已取消")
-        if run["model_calls"] >= self.settings.max_model_calls:
-            raise BudgetExceeded("模型调用次数已达上限")
-        if run["tokens_used"] >= self.settings.max_total_tokens:
-            raise BudgetExceeded("模型 token 预算已达上限")
-        elapsed = (datetime.now().astimezone() - datetime.fromisoformat(run["created_at"])).total_seconds()
-        if elapsed > self.settings.max_run_seconds:
-            raise BudgetExceeded("任务执行时间已达上限")
+        if run["model_calls"] >= limits["model_calls"]:
+            raise BudgetExceeded("model_calls", observed=run["model_calls"], limit=limits["model_calls"])
+        if run["tokens_used"] >= limits["total_tokens"]:
+            raise BudgetExceeded("total_tokens", observed=run["tokens_used"], limit=limits["total_tokens"])
+        self.check_execution_time(run_id)
+
+    def check_execution_time(self, run_id: str) -> None:
+        elapsed = self.store.active_elapsed_seconds(run_id)
+        limit = effective_limits(self.store.get_run(run_id))["run_seconds"]
+        if elapsed >= limit:
+            raise BudgetExceeded("run_seconds", observed=math.ceil(elapsed), limit=limit)
 
     def generate(self, run_id: str, node: str, cache_key: str, system: str, user: str, *, max_tokens: int = 4000) -> dict[str, Any]:
         cached = self.store.cache_get(run_id, node, cache_key)
@@ -54,17 +66,23 @@ class ModelGateway:
         ]
         last_error: Exception | None = None
         request_max_tokens = max_tokens
-        reasoning_effort = self.settings.model_code_reasoning_effort if node == "code_loop" else self.settings.model_reasoning_effort
+        # Plans have a strict JSON schema and a small output budget. Deep
+        # reasoning can consume the entire allowance before JSON is emitted.
+        reasoning_effort = self.settings.model_code_reasoning_effort if node in {"code_loop", "plan"} else self.settings.model_reasoning_effort
         thinking_type = "disabled" if reasoning_effort == "none" else "enabled"
         for attempt in range(4):
             self.check_limits(run_id)
-            remaining = self.settings.max_total_tokens - self.store.get_run(run_id)["tokens_used"]
+            run_before_call = self.store.get_run(run_id)
+            total_token_limit = effective_limits(run_before_call)["total_tokens"]
+            run_seconds_limit = effective_limits(run_before_call)["run_seconds"]
+            remaining = total_token_limit - run_before_call["tokens_used"]
             input_reserve = sum(len(message["content"]) for message in messages)
             call_max_tokens = min(request_max_tokens, remaining - input_reserve)
             if call_max_tokens < 512:
-                raise BudgetExceeded("剩余 token 预算不足以完成模型输出")
+                raise BudgetExceeded("output_reserve", observed=remaining - input_reserve, limit=512)
             self.store.record_model_attempt(run_id, node)
             try:
+                remaining_seconds = max(0.1, run_seconds_limit - self.store.active_elapsed_seconds(run_id))
                 response = self.client.chat.completions.create(
                     model=self.settings.model_name,
                     messages=messages,
@@ -73,6 +91,7 @@ class ModelGateway:
                     extra_body={"thinking": {"type": thinking_type}},
                     response_format={"type": "json_object"},
                     max_tokens=call_max_tokens,
+                    timeout=min(120, remaining_seconds),
                 )
                 choice = response.choices[0]
                 content = choice.message.content or ""
@@ -91,21 +110,22 @@ class ModelGateway:
                     "completion_tokens": getattr(response.usage, "completion_tokens", None),
                     "content_chars": len(content),
                 })
+                self.check_execution_time(run_id)
                 if run["cancel_requested"]:
                     raise RunCancelled("任务已取消")
-                if run["tokens_used"] > self.settings.max_total_tokens:
-                    raise BudgetExceeded("模型 token 预算已达上限")
+                if run["tokens_used"] > total_token_limit:
+                    raise BudgetExceeded("total_tokens", observed=run["tokens_used"], limit=total_token_limit)
                 if choice.finish_reason == "length":
-                    request_max_tokens = min(call_max_tokens * 2, self.settings.max_total_tokens)
-                    raise ModelOutputError("模型输出长度不足，JSON 未完成")
+                    request_max_tokens = min(call_max_tokens * 2, total_token_limit)
+                    raise ModelOutputError("模型输出长度不足，JSON 未完成", reason_code="length")
                 if choice.finish_reason != "stop":
-                    raise ModelOutputError(f"模型输出中断（{choice.finish_reason}）")
+                    raise ModelOutputError("模型输出中断", reason_code="finish_reason")
                 try:
                     value = json.loads(content)
                 except json.JSONDecodeError as exc:
-                    raise ModelOutputError("模型没有返回合法 JSON") from exc
+                    raise ModelOutputError("模型没有返回合法 JSON", reason_code="invalid_json") from exc
                 if not isinstance(value, dict):
-                    raise ModelOutputError("模型输出必须是 JSON 对象")
+                    raise ModelOutputError("模型输出必须是 JSON 对象", reason_code="not_object")
                 self.store.cache_set(run_id, node, cache_key, value)
                 return value
             except (RateLimitError, APIConnectionError, APITimeoutError) as exc:
@@ -116,6 +136,8 @@ class ModelGateway:
                 last_error = exc
             except ModelOutputError as exc:
                 last_error = exc
+                self.store.record_model_output_issue(run_id, node=node, attempt=attempt + 1,
+                                                     reason_code=exc.reason_code)
                 if "长度不足" not in str(exc):
                     messages.append({"role": "user", "content": "上一个响应不符合要求。请重发完整、有效的 JSON 对象，字段和值必须齐全。"})
                 if attempt >= 1:

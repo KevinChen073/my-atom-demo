@@ -2,9 +2,9 @@
 
 一个本地可运行的 Atoms 类应用生成工作台。用户创建项目、确认需求澄清和 Build Plan 后，单 Agent 在固定的 React + TypeScript + Vite 模板中生成代码，实际执行类型检查与构建，并保存可恢复的项目版本。
 
-产品范围见 [PRD](docs/PRD.md)，架构见 [系统设计](docs/ARCHITECTURE.md)，本轮实现见 [MVP2 落地映射](docs/MVP2-IMPLEMENTATION.md)。工作台视觉以 [V3 设计](design/v3/README.md) 为准，浏览器验收见 [V3 TC](tests/cases/DESIGN-V3.md)。首页示例由 [目录](examples/catalog.json) 定义，交互见 [示例 UI](docs/EXAMPLE-UI.md)，验收用例见 [示例 TC](tests/cases/EXAMPLES.md)。修改基线前阅读 [AGENTS.md](AGENTS.md) 和 [ADR-002](docs/decisions/ADR-002-change-control.md)。Atoms 调研与 Spike 过程记录保存在本机 `D:\AI\ATOM笔试\docs`。
+产品范围见 [PRD](docs/PRD.md)，架构见 [系统设计](docs/ARCHITECTURE.md)，本轮交互决定见 [ADR-010](docs/decisions/ADR-010-structured-card-single-send.md)，验收见 [单一发送 TC](tests/cases/SINGLE-SEND.md)。工作台视觉以 [V7 设计入口](design/design.md) 为准。首页示例由 [目录](examples/catalog.json) 定义，交互见 [示例 UI](docs/EXAMPLE-UI.md)，验收用例见 [示例 TC](tests/cases/EXAMPLES.md)。修改基线前阅读 [AGENTS.md](AGENTS.md) 和 [ADR-002](docs/decisions/ADR-002-change-control.md)。Atoms 调研与 Spike 过程记录保存在本机 `D:\AI\ATOM笔试\docs`。
 
-用户新确认的[生成交付物边界与 5 版回滚目标](docs/decisions/ADR-004-generated-deliverable-boundaries.md)目前仅写入文档，尚未迁移代码。下文“当前能力”仍如实描述旧版服务端业务数据方案；不能据此宣称新目标已完成。
+生成应用的本地持久化与最多 5 个可用快照遵循 [ADR-004](docs/decisions/ADR-004-generated-deliverable-boundaries.md)。构建失败的自动修复和人工恢复遵循 [ADR-008](docs/decisions/ADR-008-manual-build-recovery.md) 与 [ADR-009](docs/decisions/ADR-009-build-repair-harness.md)。
 
 跨项目异常收集与独立管理员后台见 [异常设计](docs/EXCEPTION-OBSERVABILITY.md)、[ADR-003](docs/decisions/ADR-003-exception-console.md) 和 [验收用例](tests/cases/EXCEPTIONS.md)。
 
@@ -65,14 +65,14 @@ npm run build
 .\.venv\Scripts\python.exe -m tests.live_examples_smoke --id mobile_ordering
 ```
 
-脚本为每次运行创建独立本地项目，检查澄清、计划、构建、预览入口和受控数据接口；浏览器内的计时、点击和下单仍按 [示例 TC](tests/cases/EXAMPLES.md) 逐项验收。
+脚本为每次运行创建独立本地项目，检查澄清、计划、构建、预览入口及生成代码的本地存储调用；浏览器内的计时、点击、下单与刷新恢复仍按 [示例 TC](tests/cases/EXAMPLES.md) 逐项验收。
 
 ## 当前能力与边界
 
-- 项目、运行、决策、事件、模型用量、版本和 LangGraph checkpoint 保存在本地 SQLite；生成源码和构建产物在 `data/`。同一访客凭证可刷新/重进恢复项目。
-- 生成代码只可写 `src/App.tsx` 与 `src/App.css`，且在批准计划后才能写入。构建命令的成功状态来自实际退出码。失败最多自动修复两轮。
-- SSE 事件按游标回放。预览用短期票据打开已构建的真实应用，生成应用通过模板 SDK 对计划中的实体做受控 CRUD；业务数据在独立 SQLite 文件中，刷新后可读回。
-- V3 桌面壳包含项目中心、工作台、概览、文档、测试、发布六页。项目内四个状态页有可直达和刷新恢复的独立 URL；同项目切页保留对话，跨项目切换会先清除旧项目内容。颜色、排版、间距等变量见 `web/src/design-tokens.css`，源值为 `design/v3/tokens.json`。
+- 项目、运行、消息、解释结果、决策、事件、模型用量、版本和 LangGraph checkpoint 保存在本地 SQLite；生成源码和构建产物在 `data/`。同一访客凭证可刷新/重进恢复项目。澄清、计划和构建失败待处理卡在底部共用“发送”；服务端按当前阶段解释并校验动作。
+- 生成代码限固定 React+TS+Vite 模板：`src/App.tsx`、`src/app.css`、`src/hooks/useAppState.ts` 与根目录 `readme.md` 必需；额外组件在 `src/components/`、额外逻辑在 `src/hooks/`，最多 12 个生成文件。只有编译/类型等源码错误才自动修复，最多 60 轮；同错连续无进展或累计第 5 次出现会提前停止。
+- SSE 事件按游标回放。预览用短期票据打开已构建的真实应用，每项目使用稳定的独立 `.localhost` origin；生成应用的业务数据只在该预览域 `localStorage`。候选产物经构建及静态资源检查后才成为可用快照。每项目最多保留 5 版，回滚只持久切换当前版本指针；浏览器业务数据不随代码回滚。
+- V7 桌面壳包含新建项目首页、工作台、概览、文档、测试、发布六个 URL 视图。项目内四个状态页可直达并刷新恢复；同项目切页保留对话，跨项目切换先清除旧项目内容。当前视觉规则见 `design/design.md`、`design/token.json` 和 `web/src/v7.css`。
 - 桌面工作台的两条竖向分隔线可拖动，也可用方向键微调；布局宽度保存在当前浏览器的 localStorage。双击分隔线或点击侧栏“恢复默认布局”即可重置。
 - 本地 Runner 与宿主共享环境，双端口只提供浏览器 origin 隔离，不构成代码执行沙箱。仅供本机可信开发测试，不可把当前配置直接公开部署。公开访问需先完成隔离 Runner、预览网关和部署验收。
 - 本仓库的 Git 远端地址为 [KevinChen073/my-atom-demo](https://github.com/KevinChen073/my-atom-demo.git)。当前文件由本地工作区管理，提交、推送和发布需另行授权。

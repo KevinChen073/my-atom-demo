@@ -15,7 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .runner import UnsafeSource
-from .app_data import AppDataService
+from .messages import MessageService
+from .preview_access import PreviewAccess, preview_origin
 from .settings import Settings
 from .store import Conflict, NotFound, Store
 from .workflow import Workflow
@@ -42,26 +43,64 @@ class DecisionInput(BaseModel):
     request_text: str | None = None
 
 
+class BudgetExtensionInput(BaseModel):
+    card_id: str
+    spec_version: int
+    model_calls: bool = False
+    total_tokens: bool = False
+    run_seconds: bool = False
+    fix_rounds: bool = False
+
+
+class CardRef(BaseModel):
+    card_id: str
+    spec_version: int
+
+
+class MessageInput(BaseModel):
+    submission_id: str
+    card_ref: CardRef
+    text: str = Field(max_length=5200)
+    answers: dict[str, str] = Field(default_factory=dict)
+    reply_to_interpretation_id: str | None = None
+
+
 def owner_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     settings = settings or Settings()
+    if settings.app_env not in {"local", "container_smoke"}:
+        raise RuntimeError("生产存储与隔离 Runner 尚未接入，拒绝启动公开 API")
     store = Store(settings.app_db)
-    app_data = AppDataService(settings.data_dir / "app_data.sqlite3")
+    preview_access = PreviewAccess(settings.data_dir / "preview_access.sqlite3")
     workflow = Workflow(settings, store, model=model)
+    messages = MessageService(store, workflow)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
         workflow.recover()
+        messages.recover()
         yield
-        workflow.executor.shutdown(wait=False, cancel_futures=True)
+        # The checkpointer owns one SQLite connection shared with graph worker
+        # threads. Drain active work before closing it, including on TestClient
+        # shutdown, or a concurrent put_writes can crash the Python process.
+        messages.executor.shutdown(wait=True, cancel_futures=True)
+        workflow.executor.shutdown(wait=True, cancel_futures=True)
         workflow.checkpoint_connection.close()
 
     app = FastAPI(title="MYATOM MVP2", lifespan=lifespan)
     app.state.store = store
     app.state.workflow = workflow
+    app.state.messages = messages
+
+    if settings.app_env == "container_smoke":
+        @app.middleware("http")
+        async def smoke_only(request: Request, call_next):
+            if request.url.path != "/api/health":
+                return JSONResponse({"detail": "容器启动检查模式，应用功能尚未开放"}, status_code=503)
+            return await call_next(request)
 
     @app.exception_handler(NotFound)
     async def not_found(_: Request, exc: NotFound):
@@ -94,7 +133,11 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     def run_access(request: Request, run_id: str) -> dict[str, Any]:
         run = store.get_run(run_id)
         project_access(request, run["project_id"])
-        return run
+        return workflow.present_run(run)
+
+    def public_submission(message: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in message.items()
+                if key not in {"idempotency_key", "request_hash", "interpreted_intents"}}
 
     @app.get("/api/health")
     def health():
@@ -116,14 +159,18 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
 
     @app.get("/api/projects/{project_id}")
     def get_project(project_id: str, request: Request):
-        return project_access(request, project_id)
+        project = project_access(request, project_id)
+        project["runs"] = [workflow.present_run(run) for run in project["runs"][:1]] + project["runs"][1:]
+        return project
 
     @app.post("/api/projects/{project_id}/runs", status_code=201)
     def create_run(project_id: str, body: RunInput, request: Request, idempotency_key: str | None = Header(default=None)):
         project_access(request, project_id)
         if not body.request_text.strip() or len(body.request_text.strip()) < 10:
             raise HTTPException(status_code=422, detail="请至少用 10 个字描述应用需求")
-        run, created = store.create_run(project_id, body.request_text.strip(), idempotency_key or str(uuid.uuid4()))
+        run, created = store.create_run(project_id, body.request_text.strip(), idempotency_key or str(uuid.uuid4()),
+            limits={"model_calls": settings.max_model_calls, "total_tokens": settings.max_total_tokens,
+                    "run_seconds": settings.max_run_seconds, "fix_rounds": settings.max_fix_rounds})
         if created:
             workflow.enqueue(run["id"])
         return {"run": run, "created": created}
@@ -131,6 +178,90 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str, request: Request):
         return run_access(request, run_id)
+
+    @app.get("/api/runs/{run_id}/messages")
+    def list_messages(run_id: str, request: Request):
+        run_access(request, run_id)
+        return {"messages": [public_submission(item) for item in store.list_submissions(run_id)]}
+
+    @app.get("/api/runs/{run_id}/messages/{submission_id}")
+    def get_message(run_id: str, submission_id: str, request: Request):
+        run_access(request, run_id)
+        message = store.get_submission(submission_id)
+        if message["run_id"] != run_id:
+            raise NotFound("消息不存在")
+        return public_submission(message)
+
+    @app.post("/api/runs/{run_id}/messages", status_code=202)
+    def submit_message(run_id: str, body: MessageInput, request: Request, idempotency_key: str | None = Header(default=None)):
+        run = run_access(request, run_id)
+        try:
+            uuid.UUID(body.submission_id)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail="消息编号必须是 UUID") from exc
+        content = body.text
+        if not content.strip() and not body.answers:
+            raise HTTPException(status_code=422, detail="请输入消息或选择澄清卡答案")
+        if len(body.answers) > 3 or any(len(key) > 40 or len(value) > 500 for key, value in body.answers.items()):
+            raise HTTPException(status_code=422, detail="澄清答案格式无效")
+        try:
+            duplicate = store.get_submission(body.submission_id)
+        except NotFound:
+            duplicate = None
+        if duplicate:
+            if duplicate["run_id"] != run_id:
+                raise Conflict("消息编号已用于其他任务")
+            if duplicate["idempotency_key"] != (idempotency_key or body.submission_id):
+                raise Conflict("消息编号与幂等键不一致")
+            message, created = store.create_submission(run_id, submission_id=body.submission_id,
+                key=idempotency_key or body.submission_id, card_id=body.card_ref.card_id,
+                spec_version=body.card_ref.spec_version, text=content, answers=body.answers,
+                reply_to_interpretation_id=body.reply_to_interpretation_id)
+            return {"message": public_submission(message), "created": created}
+        if body.answers:
+            if run["status"] != "awaiting_clarification" or run.get("card", {}).get("type") != "clarification":
+                raise HTTPException(status_code=422, detail="当前阶段不接受澄清答案")
+            ids = {question["id"] for question in (run["card"].get("payload") or {}).get("questions", [])}
+            if set(body.answers) - ids:
+                raise HTTPException(status_code=422, detail="澄清答案包含非当前卡片的问题")
+        message, created = store.create_submission(run_id, submission_id=body.submission_id,
+            key=idempotency_key or body.submission_id, card_id=body.card_ref.card_id,
+            spec_version=body.card_ref.spec_version, text=content, answers=body.answers,
+            reply_to_interpretation_id=body.reply_to_interpretation_id)
+        if created:
+            messages.enqueue(message["id"])
+        return {"message": public_submission(message), "created": created}
+
+    @app.post("/api/runs/{run_id}/offer-repair")
+    def offer_repair(run_id: str, request: Request):
+        run_access(request, run_id)
+        try:
+            return workflow.offer_repair(run_id)
+        except ValueError as exc:
+            raise Conflict(str(exc)) from exc
+
+    @app.post("/api/runs/{run_id}/offer-budget")
+    def offer_budget(run_id: str, request: Request):
+        run_access(request, run_id)
+        try:
+            return workflow.offer_budget(run_id)
+        except ValueError as exc:
+            raise Conflict(str(exc)) from exc
+
+    @app.post("/api/runs/{run_id}/budgets/extend", status_code=202)
+    def extend_budget(run_id: str, body: BudgetExtensionInput, request: Request,
+                      idempotency_key: str | None = Header(default=None)):
+        run_access(request, run_id)
+        selected = {kind: getattr(body, kind) for kind in
+                    ("model_calls", "total_tokens", "run_seconds", "fix_rounds")}
+        try:
+            decision, created = store.extend_budget(run_id, key=idempotency_key or str(uuid.uuid4()),
+                card_id=body.card_id, spec_version=body.spec_version, selected=selected)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        if created:
+            workflow.enqueue(run_id)
+        return {"decision_id": decision["id"], "created": created, "run": workflow.present_run(store.get_run(run_id))}
 
     @app.get("/api/runs/{run_id}/events")
     def get_events(run_id: str, request: Request, after_seq: int = 0):
@@ -179,6 +310,11 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     @app.post("/api/runs/{run_id}/decisions", status_code=202)
     def submit_decision(run_id: str, body: DecisionInput, request: Request, idempotency_key: str | None = Header(default=None)):
         run = run_access(request, run_id)
+        if run["status"] == "awaiting_repair" and body.action in {"continue_repair", "guided_repair", "rebuild", "extend_auto_repair"}:
+            state = workflow.graph.get_state({"configurable": {"thread_id": run_id}}).values or {}
+            blocker = workflow._recovery_blocker(state)
+            if blocker:
+                raise Conflict(blocker)
         payload: dict[str, Any] = {}
         if body.action == "confirm_clarification":
             card = run["card"] or {}
@@ -199,7 +335,14 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
             if not (body.feedback or "").strip():
                 raise HTTPException(status_code=422, detail="请写明希望修改的计划内容")
             payload = {"feedback": body.feedback.strip()[:2000]}
-        elif body.action not in {"approve_plan", "return_to_clarification"}:
+        elif body.action == "guided_repair":
+            feedback = (body.feedback or "").strip()
+            if not 3 <= len(feedback) <= 2000:
+                raise HTTPException(status_code=422, detail="请用 3–2000 字说明修复方向")
+            payload = {"feedback": feedback}
+        elif body.action in {"continue_repair", "rebuild", "extend_auto_repair"}:
+            payload = {}
+        elif body.action != "approve_plan":
             raise HTTPException(status_code=422, detail="不支持的决策动作")
         decision, created = store.submit_decision(run_id, key=idempotency_key or str(uuid.uuid4()), card_id=body.card_id,
                                                    spec_version=body.spec_version, action=body.action, payload=payload)
@@ -212,7 +355,7 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
         run = run_access(request, run_id)
         if run["status"] in {"completed", "failed", "cancelled", "budget_exceeded"}:
             return run
-        if run["status"] in {"awaiting_clarification", "awaiting_plan"}:
+        if run["status"] in {"awaiting_clarification", "awaiting_plan", "awaiting_repair", "awaiting_budget"}:
             return store.update_run(run_id, status="cancelled", phase="Cancelled", cancel_requested=1,
                                     event_type="cancelled", event_payload={})
         return store.update_run(run_id, cancel_requested=1, event_type="cancel_requested", event_payload={})
@@ -223,6 +366,12 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
         project_access(request, version["project_id"])
         return version
 
+    @app.post("/api/projects/{project_id}/versions/{version_id}/activate")
+    def activate_version(project_id: str, version_id: str, request: Request):
+        project_access(request, project_id)
+        version = store.activate_version(project_id, version_id)
+        return {"version": version, "active_version_id": version["id"]}
+
     @app.get("/api/versions/{version_id}/preview")
     def get_preview(version_id: str, request: Request):
         version = store.get_version(version_id)
@@ -232,8 +381,8 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
         dist = workflow.runner.artifact(version["project_id"], version["run_id"]) / "dist" / "index.html"
         if not dist.is_file():
             raise HTTPException(status_code=404, detail="该版本尚无可预览的构建产物")
-        ticket, expires = app_data.issue_ticket(version_id, version["project_id"])
-        return {"url": f"http://127.0.0.1:{settings.preview_port}/open/{version_id}?ticket={ticket}", "expires_at": expires,
+        ticket, expires = preview_access.issue_ticket(version_id, version["project_id"])
+        return {"url": f"{preview_origin(version['project_id'], settings.preview_port)}/open/{version_id}?ticket={ticket}", "expires_at": expires,
                 "scope": "local_preview_only"}
 
     @app.get("/api/versions/{version_id}/files/{name:path}")

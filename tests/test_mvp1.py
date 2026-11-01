@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import time
+import re
 from pathlib import Path
 
 import pytest
@@ -21,14 +22,24 @@ class FakeModel:
     def generate(self, run_id: str, node: str, cache_key: str, system: str, user: str, *, max_tokens: int = 4000):
         self.calls.append((node, cache_key))
         if node == "clarify":
-            return {"summary": "制作一个计数器", "assumptions": ["单页"], "questions": [{"text": "初始值是多少？", "default": "0", "required": True}]}
+            question = "初始值是多少？" if cache_key.startswith("card1") else "按钮放在什么位置？" if cache_key.startswith("card2") else "是否保留计数？"
+            return {"summary": "制作一个计数器", "assumptions": ["单页"], "questions": [{"text": question, "default": "0", "required": True}]}
+        if node == "clarity_gate":
+            return {"complete": True, "missing": []}
         if node == "plan":
             return {"title": "计数器", "pages": [{"name": "首页", "purpose": "计数"}], "features": ["点击加一"], "data_model": ["仅页面状态"], "acceptance": ["点击后数字增加"], "tasks": ["生成组件"], "limitations": ["预览在 MVP2"]}
         if node == "code_loop":
-            return {
-                "app_tsx": "import { useState } from 'react'\nimport './App.css'\nexport default function App() { const [count, setCount] = useState(0); return <main><h1>计数器</h1><button onClick={() => setCount(count + 1)}>加一 {count}</button></main> }",
-                "app_css": "body { margin: 0; font-family: sans-serif; } main { padding: 2rem; }",
+            files = {
+                "src/App.tsx": "import './app.css'\nimport { useAppState } from './hooks/useAppState'\nexport default function App() { const { count, increment } = useAppState(); return <main><h1>计数器</h1><button onClick={increment}>加一 {count}</button></main> }",
+                "src/hooks/useAppState.ts": "import { useState } from 'react'\nexport function useAppState() { const [count, setCount] = useState(0); return { count, increment: () => setCount(value => value + 1) } }",
+                "src/app.css": "body { margin: 0; font-family: sans-serif; } main { padding: 2rem; }",
+                "readme.md": "# 计数器\n点击加一；页面状态不持久化。",
             }
+            partial = re.search(r"路径必须且只能是 (.*?)；", system)
+            if partial:
+                targets = [part.strip() for part in partial.group(1).split(",")]
+                return {"files": {name: files[name] for name in targets}}
+            return {"files": files}
         raise AssertionError(node)
 
 
@@ -95,7 +106,7 @@ def test_real_files_gate_revision_persistence_and_isolation(tmp_path: Path):
         assert version["manifest"]["build"]["ok"] is True
         assert all(step["exit_code"] == 0 for step in version["manifest"]["build"]["steps"])
         source = client.get(f"/api/versions/{version['id']}/files/src/App.tsx")
-        assert source.status_code == 200 and "setCount" in source.text
+        assert source.status_code == 200 and "useAppState" in source.text
         assert "test-only" not in source.text
         events = client.get(f"/api/runs/{run_id}/events").json()["events"]
         assert [event["seq"] for event in events] == list(range(1, len(events) + 1))

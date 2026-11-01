@@ -14,7 +14,20 @@ export type ExceptionRecord = {
 
 export type TimelineEvent = { type: string; at: string; seq: number }
 export type ExceptionPage = { items: ExceptionRecord[]; next_cursor: string | null }
-export type ExceptionDetail = { exception: ExceptionRecord; timeline: TimelineEvent[] }
+export type RunMetrics = {
+  created_at: string
+  elapsed_seconds: number | null
+  active_seconds: number | null
+  model_calls: number
+  tokens_used: number
+}
+export type BuildCheck = {
+  attempt: number; outcome: 'passed' | 'failed'; category: string; command: string
+  exit_code: number | null; duration_seconds: number | null; fix_round: number
+  model_calls: number | null; tokens_used: number | null; fingerprints: string[]
+  target_files: string[]; error_codes: string[]; stop_code: string; occurred_at: string
+}
+export type ExceptionDetail = { exception: ExceptionRecord; timeline: TimelineEvent[]; run_metrics: RunMetrics | null; build_checks: BuildCheck[] }
 
 export type ExceptionFilters = {
   source: string

@@ -145,6 +145,11 @@ h1,h2,h3,p { margin-top: 0; }
 .detail-fields > div { display: grid; grid-template-columns: 82px minmax(0,1fr); gap: 10px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 12px; line-height: 1.5; }
 .detail-fields dt { color: var(--quiet); }
 .detail-fields dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.run-metrics { padding: 18px 22px 16px; border-bottom: 1px solid var(--line); }
+.run-metrics .section-heading { margin-bottom: 4px; }
+.run-metrics .detail-fields { padding: 0; }
+.run-metrics .detail-fields > div { padding: 9px 0; }
+.metrics-note { margin: 10px 0 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .timeline { padding: 20px 22px 24px; }
 .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 16px; }
 .section-heading h3 { font-size: 13px; margin: 0; }

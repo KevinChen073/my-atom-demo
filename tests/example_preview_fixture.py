@@ -12,7 +12,7 @@ import os
 from fastapi import HTTPException
 from fastapi.responses import RedirectResponse
 
-from backend.app_data import AppDataService
+from backend.preview_access import PreviewAccess
 from backend.preview import create_preview_app
 from backend.settings import Settings
 from backend.store import Store
@@ -32,5 +32,5 @@ def test_open():
         version = Store(settings.app_db).get_version(version_id)
     except Exception as exc:
         raise HTTPException(status_code=404, detail="Test version missing") from exc
-    ticket, _ = AppDataService(settings.data_dir / "app_data.sqlite3").issue_ticket(version_id, version["project_id"])
+    ticket, _ = PreviewAccess(settings.data_dir / "preview_access.sqlite3").issue_ticket(version_id, version["project_id"])
     return RedirectResponse(f"/open/{version_id}?ticket={ticket}", status_code=303)

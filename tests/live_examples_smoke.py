@@ -29,12 +29,14 @@ PLAN_TERMS = {
 }
 
 
-def wait_for(client: TestClient, run_id: str, expected: str, deadline: float) -> dict:
+def wait_for(client: TestClient, run_id: str, expected: str, deadline: float, *, after_spec: int = -1) -> dict:
     while time.monotonic() < deadline:
         response = client.get(f"/api/runs/{run_id}")
         response.raise_for_status()
         run = response.json()
-        if run["status"] == expected or run["status"] in TERMINAL:
+        if (run["status"] == expected and run["spec_version"] > after_spec) or run["status"] in TERMINAL:
+            return run
+        if expected == "awaiting_plan" and run["status"] == "awaiting_clarification" and run["spec_version"] > after_spec:
             return run
         time.sleep(0.5)
     raise TimeoutError(f"run {run_id} did not reach {expected}")
@@ -42,18 +44,17 @@ def wait_for(client: TestClient, run_id: str, expected: str, deadline: float) ->
 
 def plan_gaps(example_id: str, plan: dict) -> list[str]:
     gaps: list[str] = []
-    if not plan.get("entities"):
-        gaps.append("缺少服务端持久化实体")
     wording = " ".join(str(part) for key in ("features", "data_model", "acceptance", "tasks") for part in plan.get(key, []))
+    if "localStorage" not in wording:
+        gaps.append("缺少预览域 localStorage 持久化说明")
     for alternatives in PLAN_TERMS.get(example_id, []):
         if not any(term in wording for term in alternatives):
             gaps.append("缺少关键功能：" + "/".join(alternatives))
-    fields = {field["name"] for entity in plan.get("entities", []) for field in entity.get("fields", [])}
-    if example_id == "pomodoro_todo" and not any("pomodor" in field or "count" in field for field in fields):
-        gaps.append("任务实体缺少番茄数")
+    if example_id == "pomodoro_todo" and "番茄数" not in wording:
+        gaps.append("任务数据缺少番茄数")
     if example_id == "elder_clicker":
-        if not any("score" in field for field in fields) or not any("skin" in field for field in fields):
-            gaps.append("持久化实体缺少最高分或选中皮肤")
+        if "最高分" not in wording or "皮肤" not in wording:
+            gaps.append("本地数据缺少最高分或选中皮肤")
         high_score_lines = [str(item) for key in ("features", "acceptance", "tasks") for item in plan.get(key, [])
                             if "演示" in str(item) and "最高分" in str(item)]
         if not any(("计入" in line or "更新" in line or "保存" in line) and "不计入" not in line for line in high_score_lines):
@@ -63,8 +64,8 @@ def plan_gaps(example_id: str, plan: dict) -> list[str]:
         if not any(("回合结束" in line or "结束时" in line) and "最高分" in line for line in high_score_lines +
                    [str(item) for key in ("features", "acceptance", "tasks") for item in plan.get(key, [])]):
             gaps.append("回合结束按最终本轮得分结算最高分，避免快速连点漏分")
-    if example_id == "mobile_ordering" and not any(entity["name"] == "orders" for entity in plan.get("entities", [])):
-        gaps.append("缺少 orders 订单实体")
+    if example_id == "mobile_ordering" and "订单" not in wording:
+        gaps.append("缺少本地订单历史")
     return gaps
 
 
@@ -74,6 +75,17 @@ def submit_decision(client: TestClient, run: dict, action: str, **extra: object)
         json={"card_id": run["card_id"], "spec_version": run["spec_version"], "action": action, **extra},
     )
     response.raise_for_status()
+
+
+def version_hooks_use_local_storage(client: TestClient, version: dict) -> bool:
+    hook_paths = [item["path"] for item in version["manifest"]["files"]
+                  if item["path"].startswith("src/hooks/") and item["path"].endswith(".ts")]
+    sources = []
+    for hook_path in hook_paths:
+        response = client.get(f"/api/versions/{version['id']}/files/{hook_path}")
+        response.raise_for_status()
+        sources.append(response.text)
+    return any("localStorage" in source for source in sources)
 
 
 def run_example(example: dict, settings: Settings, timeout: int) -> dict:
@@ -98,17 +110,22 @@ def run_example(example: dict, settings: Settings, timeout: int) -> dict:
             questions = run["card"]["payload"]["questions"]
             answers = {item["id"]: item["default"] or "按原始需求实现" for item in questions}
             submit_decision(client, run, "confirm_clarification", answers=answers)
-            run = wait_for(client, run_id, "awaiting_plan", deadline)
+            run = wait_for(client, run_id, "awaiting_plan", deadline, after_spec=run["spec_version"])
+            while run["status"] == "awaiting_clarification":
+                questions = run["card"]["payload"]["questions"]
+                answers = {item["id"]: item["default"] or "按原始需求实现" for item in questions}
+                submit_decision(client, run, "confirm_clarification", answers=answers)
+                run = wait_for(client, run_id, "awaiting_plan", deadline, after_spec=run["spec_version"])
             if run["status"] != "awaiting_plan":
                 raise RuntimeError(run.get("error") or run["status"])
             gaps = plan_gaps(example["id"], run["plan"])
             if gaps:
+                old_spec = run["spec_version"]
                 submit_decision(client, run, "revise_plan", feedback="请补足以下验收项，勿改动原需求：" + "；".join(gaps))
-                run = wait_for(client, run_id, "awaiting_plan", deadline)
+                run = wait_for(client, run_id, "awaiting_plan", deadline, after_spec=old_spec)
                 if run["status"] != "awaiting_plan":
                     raise RuntimeError(run.get("error") or run["status"])
                 gaps = plan_gaps(example["id"], run["plan"])
-            result["plan_entities"] = [entity["name"] for entity in run["plan"].get("entities", [])]
             result["plan_gaps"] = gaps
             if gaps:
                 result["status"] = "plan_rejected"
@@ -127,9 +144,8 @@ def run_example(example: dict, settings: Settings, timeout: int) -> dict:
             version = client.get(f"/api/projects/{project_id}").json()["versions"][0]
             result["version_id"] = version["id"]
             result["build_ok"] = version["manifest"]["build"]["ok"]
-            source = client.get(f"/api/versions/{version['id']}/files/src/App.tsx").text
-            result["uses_app_data"] = "./appData" in source
-            if example["smoke"]["requires_server_data"] and not result["uses_app_data"]:
+            result["uses_local_storage"] = version_hooks_use_local_storage(client, version)
+            if example["smoke"]["requires_local_storage"] and not result["uses_local_storage"]:
                 result["status"] = "contract_failed"
                 return result
             issued = client.get(f"/api/versions/{version['id']}/preview")
@@ -139,9 +155,8 @@ def run_example(example: dict, settings: Settings, timeout: int) -> dict:
                 opened = preview.get(path.path + "?" + path.query)
                 result["preview_http"] = opened.status_code
                 result["preview_has_assets"] = "assets" in opened.text
-                entity = result["plan_entities"][0]
-                result["data_list_http"] = preview.get(f"/data/{version['id']}/{entity}").status_code
-            if not result["build_ok"] or result["preview_http"] != 200 or result["data_list_http"] != 200:
+                result["origin"] = path.hostname
+            if not result["build_ok"] or result["preview_http"] != 200 or not result["preview_has_assets"]:
                 result["status"] = "contract_failed"
             return result
         except Exception as exc:

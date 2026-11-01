@@ -5,10 +5,9 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, Response
-from pydantic import BaseModel
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 
-from .app_data import AppDataService
+from .preview_access import PreviewAccess, preview_host
 from .settings import Settings
 from .store import Conflict, NotFound, Store
 
@@ -16,21 +15,28 @@ from .store import Conflict, NotFound, Store
 VERSION_ID = re.compile(r"^[0-9a-f-]{36}$")
 
 
-class RecordInput(BaseModel):
-    data: dict[str, Any]
-
-
-def cookie_name(version_id: str) -> str:
-    return "myatom_preview_" + version_id.replace("-", "")
-
-
 def create_preview_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     if settings.app_env != "local":
         raise RuntimeError("同宿主预览仅允许 APP_ENV=local")
     store = Store(settings.app_db)
-    app_data = AppDataService(settings.data_dir / "app_data.sqlite3")
+    access = PreviewAccess(settings.data_dir / "preview_access.sqlite3")
     app = FastAPI(title="MYATOM local preview", docs_url=None, redoc_url=None, openapi_url=None)
+
+    def expired_response() -> HTMLResponse:
+        return HTMLResponse(
+            "<!doctype html><html lang='zh-CN'><meta charset='utf-8'>"
+            "<title>预览已过期</title><body><main>"
+            "<h1>预览已过期</h1><p>请点击工作台中的“重新载入”，获取新的预览访问权限。</p>"
+            "</main></body></html>",
+            status_code=401,
+            headers={
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer",
+                "X-Content-Type-Options": "nosniff",
+                "Content-Security-Policy": f"default-src 'none'; frame-ancestors {settings.workbench_origin}",
+            },
+        )
 
     @app.exception_handler(NotFound)
     async def missing(_: Request, exc: NotFound):
@@ -44,39 +50,44 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
     async def invalid(_: Request, exc: ValueError):
         return JSONResponse({"detail": str(exc)}, status_code=422)
 
-    def authorize(request: Request, version_id: str) -> tuple[dict[str, Any], str]:
+    def authorize(request: Request, version_id: str, session_token: str) -> tuple[dict[str, Any], str]:
         if not VERSION_ID.fullmatch(version_id):
             raise HTTPException(status_code=404, detail="版本不存在")
-        project_id = app_data.session_project(request.cookies.get(cookie_name(version_id)), version_id)
+        project_id = access.session_project(session_token, version_id)
         if not project_id:
             raise HTTPException(status_code=401, detail="预览访问已过期，请从工作台重新打开")
         version = store.get_version(version_id)
-        if version["project_id"] != project_id:
+        if version["project_id"] != project_id or request.url.hostname != preview_host(project_id):
             raise HTTPException(status_code=403, detail="预览无权访问此项目")
         return version, project_id
 
-    def check_origin(request: Request) -> None:
-        origin = request.headers.get("origin")
-        expected = f"http://127.0.0.1:{settings.preview_port}"
-        if origin and origin != expected:
-            raise HTTPException(status_code=403, detail="预览请求来源不受信任")
-
     @app.get("/open/{version_id}")
-    def open_preview(version_id: str, ticket: str):
+    def open_preview(version_id: str, ticket: str, request: Request):
         if not VERSION_ID.fullmatch(version_id):
             raise HTTPException(status_code=404, detail="版本不存在")
-        session = app_data.consume_ticket(ticket, version_id)
+        version = store.get_version(version_id)
+        if request.url.hostname != preview_host(version["project_id"]):
+            raise HTTPException(status_code=403, detail="预览域与项目不匹配")
+        session = access.consume_ticket(ticket, version_id)
         if not session:
-            raise HTTPException(status_code=401, detail="预览票据无效或已使用")
-        response = RedirectResponse(f"/v/{version_id}/", status_code=303)
-        response.set_cookie(cookie_name(version_id), session[0], httponly=True, samesite="strict", max_age=3600, secure=False)
+            return expired_response()
+        if session[1] != version["project_id"]:
+            raise HTTPException(status_code=403, detail="预览域与项目不匹配")
+        # A cross-site iframe cannot send a SameSite=Strict cookie. A scoped
+        # session path also authorizes relative Vite assets on the same origin.
+        response = RedirectResponse(f"/s/{session[0]}/v/{version_id}/", status_code=303)
         response.headers["Cache-Control"] = "no-store"
         response.headers["Referrer-Policy"] = "no-referrer"
         return response
 
-    @app.get("/v/{version_id}/{name:path}")
-    def static_file(version_id: str, name: str, request: Request):
-        version, _ = authorize(request, version_id)
+    @app.get("/s/{session_token}/v/{version_id}/{name:path}")
+    def static_file(session_token: str, version_id: str, name: str, request: Request):
+        try:
+            version, _ = authorize(request, version_id, session_token)
+        except HTTPException as exc:
+            if exc.status_code != 401:
+                raise
+            return expired_response()
         root = (settings.data_dir / "artifacts" / version["project_id"] / version["run_id"] / "dist").resolve()
         target = (root / (name or "index.html")).resolve()
         if not target.is_relative_to(root) or not target.is_file():
@@ -84,45 +95,18 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
         headers = {
             "Content-Security-Policy": (
                 "default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-                "img-src 'self' data:; connect-src 'self'; font-src 'self'; "
+                "img-src 'self' data:; connect-src 'none'; font-src 'self'; "
                 f"base-uri 'none'; form-action 'none'; frame-ancestors {settings.workbench_origin}"
             ),
             "X-Content-Type-Options": "nosniff",
             "Referrer-Policy": "no-referrer",
             "Cache-Control": "no-store",
+            "Origin-Agent-Cluster": "?1",
         }
         if target.name == "index.html":
             html = target.read_text(encoding="utf-8").replace('="/assets/', '="./assets/')
             return HTMLResponse(html, headers=headers)
         return FileResponse(target, headers=headers)
-
-    @app.get("/data/{version_id}/{entity}")
-    def list_data(version_id: str, entity: str, request: Request):
-        version, project_id = authorize(request, version_id)
-        schema = app_data.schema_for(version, entity)
-        return app_data.list_records(project_id, entity, schema)
-
-    @app.post("/data/{version_id}/{entity}", status_code=201)
-    def create_data(version_id: str, entity: str, body: RecordInput, request: Request):
-        check_origin(request)
-        version, project_id = authorize(request, version_id)
-        return app_data.create_record(project_id, entity, app_data.schema_for(version, entity), body.data,
-                                      request.headers.get("idempotency-key"))
-
-    @app.patch("/data/{version_id}/{entity}/{record_id}")
-    @app.put("/data/{version_id}/{entity}/{record_id}")
-    def update_data(version_id: str, entity: str, record_id: str, body: RecordInput, request: Request):
-        check_origin(request)
-        version, project_id = authorize(request, version_id)
-        return app_data.update_record(project_id, entity, record_id, app_data.schema_for(version, entity), body.data)
-
-    @app.delete("/data/{version_id}/{entity}/{record_id}", status_code=204)
-    def delete_data(version_id: str, entity: str, record_id: str, request: Request):
-        check_origin(request)
-        version, project_id = authorize(request, version_id)
-        app_data.schema_for(version, entity)
-        app_data.delete_record(project_id, entity, record_id)
-        return Response(status_code=204)
 
     return app
 

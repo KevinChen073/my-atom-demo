@@ -1,10 +1,12 @@
 # MYATOM 系统架构（v0.1）
 
-状态：设计基线，2026-10-30；2026-10-31 按用户确认的 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 修订生成交付物边界。产品范围见 [PRD](PRD.md)；平台部署决策依赖本机 `D:\AI\ATOM笔试\docs\ATOMS-SPIKES.md` 中的实测记录。固定与待定边界见 [ADR-001](decisions/ADR-001-baseline.md)，冲突处理见 [ADR-002](decisions/ADR-002-change-control.md)。
+状态：设计基线，2026-10-30；2026-10-31 按用户确认的 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 修订生成交付物边界；2026-11-01 按 [ADR-006](decisions/ADR-006-single-main-run-scope.md) 收束为单次主线交付，并按 [ADR-010](decisions/ADR-010-structured-card-single-send.md) 增加当前等待卡的消息解释层。公开交付主路径已按 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md) 选定 GitHub → Azure，生产适配尚未完成；Atoms Spike 仅保留可选迁移证据。产品范围见 [PRD](PRD.md)，固定与待定边界见 [ADR-001](decisions/ADR-001-baseline.md)，冲突处理见 [ADR-002](decisions/ADR-002-change-control.md)。
 
 ## 1. 原则与系统边界
 
 固定 React + TypeScript + Vite 作为**生成应用模板**及主 Web 前端的优先方案；Python + LangGraph 编排**一个主 Agent**，不为演示而拆多 Agent。模板控制依赖、目录、构建命令和可预览能力。节点是确定性工作流阶段，Agent Loop 只在确需模型决策、工具选择或修复时运行。每次确认与外部副作用都有持久边界。基础设施和沙箱只定义接口，具体实现由 Spike 决定。
+
+当前 Graph 目标只覆盖**一个简单需求在一个 run 内生成一版可用交付物**。不增加按消息语义决定“新建内容 / 修改内容 / sidecar 聊天”的入口路由，也不为复杂需求自动跳回已结束阶段。当前等待卡前的消息解释器只在阶段内识别回答、修改、问题和明确批准，并把候选意图交给确定性门禁；它不是 Graph 的全局 IntentRouter，不能调用写文件工具。澄清阶段内补问、计划阶段内修改与构建错误修复是有界的局部循环；交付后修改需求启动新 run。快照代码回滚由版本服务处理，不进入该 Graph。见 [ADR-006](decisions/ADR-006-single-main-run-scope.md) 与 [ADR-010](decisions/ADR-010-structured-card-single-send.md)。
 
 ```mermaid
 flowchart LR
@@ -20,7 +22,7 @@ flowchart LR
   H --> M[模型服务适配器]
 ```
 
-本地建议一个 Python API 服务和受控 worker，SQLite 保存应用记录与 checkpoint，项目产物存于非公开数据目录。生产可换 Atoms Cloud 或独立托管，但适配器必须通过相同契约。浏览器从不直接调用模型服务或读取服务器文件。
+本地使用 Python API 服务和受控 worker，SQLite 保存平台记录与 checkpoint，项目产物存于非公开数据目录。公开交付选择 GitHub → Azure：主 API、独立异常后台与隔离 Runner 分别部署，平台状态和产物接持久服务；这些生产适配尚未完成。Atoms Cloud 仅作为后续可选迁移研究。浏览器从不直接调用模型服务或读取服务器文件。
 
 下文的 `ProjectRepository`、checkpointer、事件表与异常库属于 **MYATOM 平台**，可以使用服务端数据库；生成交付物自己的业务数据限其预览 origin 下的 `localStorage`。同一项目跨版本保持稳定 origin，不同项目须使用隔离 origin；项目 ID 作为存储键前缀不能阻止同源代码读取其他项目的数据。生成交付物若包含后端，只能有一个进程、一个监听端口，且不得用服务端数据库/缓存保存业务数据；MYATOM 的主 API、预览网关、独立异常后台不计入该限额。
 
@@ -30,15 +32,15 @@ flowchart LR
 
 | 接口 | 责任/最小方法 | 本地候选 | 生产候选与未决 |
 | --- | --- | --- | --- |
-| `ProjectRepository` | 项目/会话/版本 CRUD、乐观版本检查、按 owner 查找 | SQLite | Atoms DB 或外部 SQL；需验证可编程访问、迁移与事务 |
-| `CheckpointRepository` | 按 `thread_id` 恢复 LangGraph 状态 | SQLite checkpointer | 持久化 checkpointer；Atoms DB 可用性待测 |
+| `ProjectRepository` | 项目/会话/版本 CRUD、乐观版本检查、按 owner 查找 | SQLite | Azure 持久 SQL 候选；需验证事务、迁移与多实例访问 |
+| `CheckpointRepository` | 按 `thread_id` 恢复 LangGraph 状态 | SQLite checkpointer | 与生产数据库兼容的持久 checkpointer；重启恢复待测 |
 | `EventLog` | 原子追加 `seq`、按 `after_seq` 回放 | SQLite | 同数据库或可重放事件存储 |
-| `ArtifactStore` | 按项目/运行/版本保存源码、构建日志、manifest | 本地非公开目录 | Atoms App Storage 或对象存储；路径/权限待测 |
+| `ArtifactStore` | 按项目/运行/版本保存源码、构建日志、manifest | 本地非公开目录 | Azure 持久对象存储候选；原子版本提交、权限与清理待测 |
 | `GeneratedAppStorage` | 在生成模板内封装带项目/应用命名空间的浏览器 `localStorage` 读写与格式校验；只存生成应用业务数据 | 预览 origin 的浏览器存储 | 同 origin 的 Web 存储；不使用平台 DB/SQL/缓存保存交付物业务数据 |
-| `ModelGateway` | 统一消息、结构化输出、token 用量、超时、取消 | 本地配置的模型 API | Atoms AI Library 或外部模型 API；后端调用方式待测 |
-| `Runner` | 创建隔离工作区、构建/测试、限额、停止、清理 | Docker 优先 | 独立隔离执行服务；Atoms 自带沙箱能力待测 |
-| `PreviewGateway` | 发布版本、返回受限 URL、停止/过期 | 容器独立 origin | Atoms 预览或外部预览；可用性待测 |
-| `SecretProvider` | 服务端按环境取凭证 | 本地环境配置 | Atoms Keys 或托管密钥；禁止注入生成项目 |
+| `ModelGateway` | 统一消息、结构化输出、token 用量、超时、取消 | 本地配置的模型 API | Azure 端服务密钥或经授权的临时用户 Key；DeepSeek/OpenAI 兼容性待测 |
+| `Runner` | 创建隔离工作区、构建/测试、限额、停止、清理 | 本地同宿主可信开发 | Azure 上独立受限执行单元候选；隔离证据未通过前不开放公网生成 |
+| `PreviewGateway` | 发布版本、返回受限 URL、停止/过期 | `.localhost` 项目独立 origin | HTTPS 项目稳定独立 origin 与生产会话机制；待实测 |
+| `SecretProvider` | 服务端按环境取凭证 | 本地环境配置 | Azure 托管密钥；禁止注入生成项目 |
 
 适配器不向上层暴露供应商数据库字段或模型专属消息格式。MYATOM 项目/会话/运行/版本与生成应用业务数据分属服务端和浏览器两个边界。平台迁移以导出 manifest、源文件、项目/会话记录为单位；浏览器业务数据不随平台迁移或代码快照自动搬迁，不假设平台发布会自动迁移本地数据。
 
@@ -46,16 +48,16 @@ flowchart LR
 
 ## 3. API、会话与事件
 
-- `POST /api/projects` 创建项目；`GET /api/projects/{id}` 恢复；`GET /api/projects` 列表。
+- `POST /api/projects` 创建项目；`GET /api/projects/{id}` 恢复项目、run、版本与已提交的决策时间线（只返回当前访客有权访问项目的决策内容，不返回幂等键）；`GET /api/projects` 列表。
 - `POST /api/projects/{id}/runs` 用 `Idempotency-Key` 提交需求，返回 `run_id`，同一项目仅允许一个活动 run。
-- `POST /api/runs/{id}/decisions` 传 `card_id`、`spec_version`、动作、结构化答案与幂等键；服务端校验当前等待状态和版本。计划确认才可进入写代码。
+- `POST /api/runs/{id}/messages` 传 `submission_id`、`card_ref={card_id,spec_version}`、原文、结构化答案快照和可选的 `reply_to_interpretation_id`；`GET /api/runs/{id}/messages[/{submission_id}]` 读取原文、解释结果、最终动作。请求先持久化为 `interpreting`，再异步解释。服务端只对当前卡应用阶段白名单、版本乐观锁和明确批准门禁，最终决定、运行状态及事件在同一事务提交。相同键相同载荷重放同一结果，载荷变化返回 409；解释失败保留等待态。旧 `/decisions` 端点暂留给兼容调用，正式工作台只走消息接口。
 - `GET /api/runs/{id}/events?after_seq=n` 回放；`GET /api/runs/{id}/stream?after_seq=n` SSE 实时流。事件包含 `event_id`、单调 `seq`、`run_id`、`type`、`schema_version`、`at`、脱敏 `payload`；客户端按 `seq` 去重。
 - `GET /api/projects/{id}/versions`、`GET /api/versions/{id}/preview` 查询产物与预览；`POST /api/runs/{id}/cancel` 请求取消。
 - 项目快照返回持久的 `active_version_id`；回滚命令携带目标 `version_id` 和幂等键，经项目权限与快照可用性校验后原子更新当前指向，不复制产物、不调用 Agent。具体路由由实现契约确定。
 
-现有 `/app-data/{project_id}/{entity}` 属于先前 MVP2 的生成应用服务端 CRUD 实现，**不属于新的目标接口**；当前单一 `127.0.0.1:8001` 预览 origin 也不能隔离不同项目的 `localStorage`。迁移前必须在实施和测试记录中标明这些差距，不能把旧数据服务或项目 ID 键名前缀当作新边界的证据。
+生成应用的旧 `/data/{version_id}/{entity}` 服务端 CRUD 已移除。预览网关现在为每个项目使用 `p-<project_uuid>.localhost:8001` 独立 origin，同一项目版本复用该 origin；预览票据和会话仍由平台数据库管理，不承载生成应用业务数据。本地工作台从 `127.0.0.1` 跨站嵌入预览，`SameSite=Strict` Cookie 在 iframe 中不能用于授权：一次性、2 分钟票据兑换为 60 分钟会话后，网关将会话随机值放在版本限定的预览路径中，静态资源经同一路径校验。预览响应禁缓存和 Referer，服务禁访问日志；工作台“重新载入”重新签发票据。此路径仅用于本机可信开发环境，不作为公网访问设计。公网部署时需重新验证域名解析、HTTPS、令牌传递方式与浏览器存储隔离。
 
-连接层：SSE 建联后立即发送当前状态和游标，每 15 秒心跳（配置值）；断开时指数退避并加抖动重连，携带最后 `seq`；重连先补历史再接实时。刷新后以服务端状态为准，活动流不能依赖仅存在内存的 token stream。SSE 失败可轮询回放 API。连接恢复不重新提交生成命令。API 身份与访问控制在 MVP1 可使用服务端签发的访客凭证；公开部署前必须证明项目之间不可互读，不把可猜测 ID 当授权。
+连接层：SSE 建联后立即发送当前状态和游标，每 15 秒心跳（配置值）；断开时指数退避并加抖动重连，携带最后 `seq`；重连先补历史再接实时。刷新后以服务端状态为准，对话轮次由卡片事件、消息及解释结果、已提交决策和 run 终态重建；原始模型事件只用于诊断，不作为访客主界面时间线。SSE 失败可轮询回放 API。连接恢复先按 `submission_id` 对账解释状态，不因重连生成新消息或重提构建命令。API 身份与访问控制在 MVP1 可使用服务端签发的访客凭证；公开部署前必须证明项目之间不可互读，不把可猜测 ID 当授权。
 
 ## 4. 状态、检查点与版本
 
@@ -69,15 +71,18 @@ RunState = {
          version, approved_version, approved_by, approved_at},
   plan: {tasks, current_task, revision},
   workspace_ref, artifact_manifest_ref, last_good_version_id,
+  source: {candidate_ref, candidate_number, output_mode, target_files,
+           issues, feedback, passed, stop_code},
   build: {attempt, diagnostics_ref, test_summary, preview_ref},
-  budget: {token_limit, cost_limit, time_limit, used_tokens, used_cost,
-           tool_calls, deadline_at},
-  recovery: {node_attempts, fix_rounds, last_error_code, cancel_requested},
+  budget: {token_limit, cost_limit, active_time_limit, used_tokens, used_cost,
+           tool_calls, active_seconds, execution_started_at},
+  recovery: {node_attempts, fix_rounds, repair_failure_history, build_failure_history,
+             build_stop_code, source_stop_code, last_error_code, cancel_requested},
   trace_id, event_seq
 }
 ```
 
-存储事务保证：确认记录、状态转移、事件追加使用同一个业务事务；文件产物以临时目录写入后原子更名，再提交 `artifact_manifest_ref`。checkpoint 是流程恢复依据，业务记录是 UI/审计依据；两者不共享同一“写入成功”的假设，启动时执行一致性修复。确认卡采用 `spec_version` 乐观锁，过期确认返回冲突和最新卡片。
+存储事务保证：用户消息先独立入库再返回接收回执；解释器输出是候选，最终决定、状态转移、事件追加使用同一个业务事务。文件产物以临时目录写入后原子更名，再提交 `artifact_manifest_ref`。checkpoint 是流程恢复依据，业务记录是 UI/审计依据；两者不共享同一“写入成功”的假设，启动时分别恢复未解释消息与待处理决定。确认卡采用 `card_id/spec_version` 乐观锁，过期确认返回冲突和最新卡片。解释调用计入 Agent 执行时间，用户等待不计时；解释器只读卡片，不取得生成工具权限。
 
 版本目录与项目记录分开：`RunState.last_good_version_id` 是运行中的参考，项目级 `active_version_id` 才是预览/回滚的当前指向。只有构建和预览可用性检查通过的完整源码、资源、锁文件、manifest、构建产物及测试引用进入不可变可用快照。成功发布先持久化新快照并原子切换当前指向，再淘汰最早且非当前的快照，使每项目最多保留 5 个可用版本；失败不切换、不淘汰。回滚原子切换到现存可用快照，不新增版本；重复请求幂等。清理旧快照须在元数据提交后执行，并能在中断后补偿，不能产生悬空指向。`approved_spec_version` 是计划确认版本，不等同交付物 `version_id`。
 
@@ -85,60 +90,80 @@ RunState = {
 
 ## 5. LangGraph 主流程
 
+以下为当前单 run 主流程。`Clarify` 最少发出 1 张、最多 3 张卡；每张卡 1–3 道不重复问题，确认后经 `ClarityGate` 判定。计划修改只回到 `Plan`。
+
 ```mermaid
 flowchart TD
-  START --> Intake --> Clarify
-  Clarify -->|需补全| WaitClarify
-  WaitClarify -->|回答/修改| Clarify
-  Clarify -->|足够明确| Plan
+  START --> Clarify
+  Clarify -->|发出第 1 至 3 张卡| WaitClarify
+  WaitClarify -->|回答/本阶段修改| ClarityGate
+  ClarityGate -->|仍缺关键约束且未达 3 卡| Clarify
+  ClarityGate -->|完整且已确认| Plan
+  ClarityGate -->|仍缺且已达 3 卡| NeedsUser
   Plan --> WaitPlan
-  WaitPlan -->|修改/拒绝| Plan
+  Plan -->|校验无法满足范围| NeedsUser
+  WaitPlan -->|本阶段修改| Plan
   WaitPlan -->|确认| Prepare
   Prepare --> CodeLoop
-  CodeLoop -->|任务未完且预算足够| CodeLoop
-  CodeLoop -->|代码完成| BuildTest
-  BuildTest -->|可修复且未达上限| Diagnose --> CodeLoop
-  BuildTest -->|成功| Package --> Preview --> Done
-  BuildTest -->|不可修复/达上限| NeedsUser
-  CodeLoop -->|预算或安全停止| NeedsUser
-  NeedsUser -->|改需求| Plan
-  NeedsUser -->|终止| END
+  CodeLoop --> ValidateSource
+  ValidateSource -->|通过并写入工作区| BuildTest
+  ValidateSource -->|可修复且未触发停机条件| CodeLoop
+  ValidateSource -->|无进展/循环/预算或安全停止| NeedsUser
+  BuildTest -->|源码错误且未触发停机条件| Diagnose --> CodeLoop
+  BuildTest -->|成功| PackageCandidate --> PreviewCheck --> CommitVersion --> Done
+  BuildTest -->|不可修复/连续无进展/循环/达60轮| NeedsUser
+  PreviewCheck -->|入口或静态资源检查失败| NeedsUser
+  NeedsUser -->|可人工继续的源码或构建失败| WaitRepair
+  WaitRepair -->|继续或指定方向| CodeLoop
+  WaitRepair -->|原样重新构建| BuildTest
+  NeedsUser -->|其他终止原因| END
   Done --> END
 ```
 
 | Node | 输入 → 输出与工具 | 分支 / checkpoint |
 | --- | --- | --- |
-| `Intake` | 原始需求、项目身份 → 清洗后的目标/约束；仅校验/项目读取 | 无效输入终止；保存原始输入与 run |
-| `Clarify` | 目标、历史回答 → 问题/假设或完整 spec；模型结构化输出 | 有关键缺口去 `WaitClarify`，否则 `Plan`；保存卡片版本 |
-| `WaitClarify` | 澄清卡 → 经验证答案；不调用生成工具 | `interrupt()` 等待；修改后回 `Clarify`；保存确认事件 |
-| `Plan` | 已澄清 spec → 页面、数据模型、任务、验收点与预算估计 | 生成计划卡，保存 revision；不得写生成项目 |
-| `WaitPlan` | 计划卡 → `approved_spec_version` 或修改意见 | `interrupt()`；退回 `Plan`；确认事务后才放行 |
+| `Clarify` | 目标、历史回答 → 本轮 1–3 道问题与必要假设；有界只读 ReAct，最多 3 张用户可见卡 | 每轮都去 `WaitClarify`，发卡前校验轮次、去重与预算；保存卡片版本、已问问题指纹和事实来源 |
+| `WaitClarify` / `ClarityGate` | 澄清卡 → 经验证答案、已确认事实与剩余缺口；等待节点不调用模型 | `interrupt()` 等待；确认后完整则进 `Plan`，不足且未达 3 卡则继续澄清；第 3 卡仍不足进入 `NeedsUser` |
+| `Plan` | 已澄清 spec → 页面、数据模型、任务、验收点与预算估计 | 生成计划卡，保存 revision；不得写生成项目。两次校验仍失败时，以固定原因码记录最后一项具体失败，在访客结果卡与独立异常记录中展示同一受控原因；不将模型原文或异常堆栈写入异常库，也不显示构建检查 |
+| `WaitPlan` | 计划卡 → `approved_spec_version` 或本阶段修改意见 | `interrupt()`；修改仍在 `Plan` 阶段；确认事务后才放行；不回到 `Clarify` |
 | `Prepare` | 已确认计划 → 固定模板快照、工作区、任务游标 | 幂等创建工作区；保存模板版本与 manifest |
-| `CodeLoop` | 当前任务、模板文件索引、上下文摘要 → 工具调用和代码修改 | **Agent Loop**：模型决策→受控工具→观察→校验，任务完成/最大步数/预算/取消退出；每次副作用记录 |
-| `BuildTest` | 工作区 → 构建、测试、诊断摘要 | 成功进 `Package`；失败按可修复性、次数路由；保存原始日志引用 |
-| `Diagnose` | 错误分类、日志片段 → 定位与修复任务 | **回退分支**到 `CodeLoop`；限最多 2 轮（初值，可校准） |
-| `Package` | 通过的工作区 → 候选不可变源码/构建产物、hash、测试报告 | 原子写入候选产物；可重试；尚不淘汰旧版 |
-| `Preview` | 候选版本 ID → 隔离 URL 或安全失败状态 | 可用性检查通过才登记可用快照、切换当前指向并按 5 版上限清理；失败进 `NeedsUser` 且保留旧版 |
-| `NeedsUser` / `Done` | 错误/结果 → 可操作的测试卡和最终状态 | 终态持久化；下一次修改建新 run |
+| `CodeLoop` | 已批准需求与检查反馈 → 一份候选缓存引用 | 固定模板生成节点，不建立通用 CodeAgent 子图。问题全部定位到具体生成文件时仅输出这些文件，合并前一候选；否则输出完整映射。必含 `src/App.tsx`、`src/app.css`、`src/hooks/useAppState.ts`、根目录 `readme.md`；额外组件在 `src/components/`，逻辑在 `src/hooks/`；最多 12 个生成文件、6 个组件、4 个 hook、180 KB 总量 |
+| `ValidateSource` | 候选引用 → 受控问题/反馈/具体文件或完整重生建议 | 确定性校验完整候选；只有通过才幂等写工作区并进入构建。失败保存问题码、目标文件和尝试编号，不把源码放进 checkpoint；和构建修复共用 60 轮及无进展/复现停机条件 |
+| `BuildTest` | 工作区 → 构建、诊断摘要及错误指纹 | 每轮保存错误集合、停机代码、失败命令与日志引用；依赖安装/环境故障不进代码修复 |
+| `Diagnose` | 仅源码编译/类型错误 → 修复任务 | **回退分支**到 `CodeLoop`；能从构建证据定位生成文件则局部重生；源码校验与构建修复合计最多 60 轮，最近 3 次错误集合相同或某具体错误第 5 次出现则提前交人工 |
+| `PackageCandidate` | 通过的工作区 → 候选源码/构建产物、hash、manifest | 候选目录独立于可用版本，不占 5 版额度 |
+| `PreviewCheck` | 候选产物 → 入口与静态资源可读性结果 | 当前检查等级为 `static_assets_only`，不宣称执行过浏览器交互 |
+| `CommitVersion` | 通过检查的候选 → 不可变快照与 `active_version_id` | 事务入库并切换指针，成功后清理淘汰版本；失败不影响旧版 |
+| `NeedsUser` / `WaitRepair` | 源码或构建结果及历史证据 → 失败小结、动作卡 | 可修复源码或构建失败暂停等待人工明确动作；每次手动操作只做一份受限候选，已有构建候选也可原样重建，再失败重新发卡。旧终态构建 run 可由项目拥有者显式恢复检查点；硬安全停止等其他失败仍终止 |
+| `Done` | 构建和预览通过的候选 → 不可变可用版本 | 只在通过后提交；失败不占 5 个版本名额 |
 
-`Clarify` 与 `Plan` 各是短的模型推理步骤；只有 `CodeLoop` 是工具使用循环。`Diagnose → CodeLoop` 是编译/测试失败回退。用户编辑已确认需求时新建 spec/run，不直接篡改正在构建的 checkpoint。LangGraph 原生 checkpoint、interrupt 和节点划分依据见 [官方思路](https://docs.langchain.com/oss/python/langgraph/thinking-in-langgraph)与[持久化说明](https://docs.langchain.com/oss/python/langgraph/persistence)。
+`Clarify` 与 `ClarityGate` 组成有界澄清循环，但当前每节点只有结构化模型调用与确定性校验，不声称实现工具型 ReAct。`CodeLoop` 只生成受限候选，不做任意工具规划。`ValidateSource → CodeLoop` 与 `BuildTest → Diagnose → CodeLoop` 默认共用最多 60 轮自动源码修复，用户明确扩额后可提高轮次上限；能确定文件时只生成该文件，不能确定时才全量重生。检查点存候选引用及受控反馈，具体规则见 [ADR-013](decisions/ADR-013-source-validation-targeted-repair.md)；错误指纹停机规则见 [ADR-009](decisions/ADR-009-build-repair-harness.md)。停机后 `WaitRepair` 使用 `interrupt()` 等用户明确动作。人工源码修复每次只执行一轮，环境故障只能原样重新构建；同一 run 的硬预算不重置。`NeedsUser` 的其他终止原因仍结束。历史终态构建 run 的显式恢复见 [ADR-008](decisions/ADR-008-manual-build-recovery.md)。LangGraph 原生 checkpoint、interrupt 和节点划分依据见 [官方思路](https://docs.langchain.com/oss/python/langgraph/thinking-in-langgraph)与[持久化说明](https://docs.langchain.com/oss/python/langgraph/persistence)。
 
 MVP5 若启用跨对话记忆，另设 `MemoryStore`，只存有来源/时间/可撤销标记的事实偏好、跨项目资料引用、已完成技能记录和历史结论。写入前展示候选并允许更正；读取时按用户/项目作用域过滤。它不复用 run checkpoint，因为 checkpoint 只覆盖当前线程。
+
+预算暂停发生在工作线程的异常边界，不新增 LangGraph Node 或 Edge。失败节点的 checkpoint 保持原样；数据库先持久化 `awaiting_budget` 卡，确认扩额后把原阶段和活动状态恢复，工作线程重新调用原 checkpoint。用户确认与额度变更在同一事务内，双击/重试只生效一次；进程重启仅恢复已确认且处于活动状态的 run，不代替用户确认。历史额度终态需检查是否为最近 run 且 checkpoint 尚可执行。此修订见 [ADR-015](decisions/ADR-015-owner-confirmed-budget-extension.md)。
+
+### 用户可见进展投影
+
+按 [ADR-012](decisions/ADR-012-user-facing-run-progress.md)，不增加图的执行 Edge：`phase` 是当前处理点，`clarity_result` 在 `ClarityGate` 判定后记录本轮已确认问答和剩余缺口；计划任务取已持久化的 `plan.tasks`，仅表示拟做。`files_written`、`build_result.steps`、`preview_check`、`completed/version_saved` 分别是源码、实际构建命令、静态资源探针和最终版本入库的证据。前端按事件序号去重与重放，未见证据不得勾选；浏览器交互不由静态探针推断。
+
+API 读 run 时补充服务端 `active_elapsed_seconds` 与 `execution_running`。客户端仅在已同步且服务端报告正在执行时从该快照向前显示秒数；断线冻结，重连重新取服务端值。用户等待状态与终态显示固定累计时长；预算本身仍按 [ADR-007](decisions/ADR-007-active-execution-budget.md) 的持久计时决定，与前端显示无关。完成或暂停后只保留默认折叠的过程，结果/人工动作先出现。
 
 ## 6. Harness 约束
 
 ### 模型与上下文
 
-`ModelGateway` 统一结构化响应、工具调用、token 用量、超时与错误；每个阶段使用 schema 校验和最多一次格式修复，仍失败转可见错误。供应商切换只替换适配器，不让模型自选权限。上下文由“当前批准 spec + 模板 manifest + 当前任务 + 相关文件片段 + 最新构建错误 + 压缩历史”组成；工具结果保留原始引用和短摘要，超过阈值按文件/错误相关性检索，摘要不覆盖已确认事实。保存 prompt/template/schema 版本用于重放，敏感值不进上下文。
+当前 `ModelGateway` 统一 JSON 响应、模型调用次数与 token 预算、超时和格式重试；不向模型开放任意工具调用。`CodeLoop` 的上下文只取原始需求、已批准计划、已确认澄清和最近一次受控校验反馈。候选文件放在独立缓存，检查点仅保存引用；局部修复不把整份旧源码塞回 prompt。未来若扩展工具调用、相关文件检索和历史压缩，须保持已确认事实不可被摘要覆盖，并单独验证权限与预算。供应商切换通过模型适配器完成，密钥不进上下文。
 
 ### 阶段工具权限
 
 | 阶段 | 允许 | 禁止 |
 | --- | --- | --- |
 | Intake / Clarify / Plan | 读取项目事实、模板元数据；模型生成结构化卡片 | 写文件、执行命令、外网、发布 |
-| Prepare / CodeLoop | 在指定工作区列目录、读文件、补丁写文件、受限依赖命令 | 主仓库/宿主任意路径写入、读取密钥、部署 |
-| BuildTest / Diagnose | 构建/测试命令、受限日志读取 | 任意命令、生产数据写入 |
-| Package / Preview | 产物打包、经 Runner/Preview 发布候选版本 | 让模型直接操作部署凭据或平台管理接口 |
+| Prepare / CodeLoop | 服务端复制固定模板；模型只返回受限候选文件映射 | 模型直接列目录、读文件、调用 shell、写文件或读取密钥 |
+| ValidateSource | 确定性检查候选；整份通过后 Runner 在指定工作区幂等写文件 | 未通过校验就写工作区，修改主仓库或宿主任意路径 |
+| BuildTest / Diagnose | Runner 执行固定的 `npm ci --ignore-scripts` 与 `npm run build`；服务端读取诊断并定位文件 | 模型自选命令、环境故障时自动重写源码 |
+| Package / Preview | Runner 打包候选并检查静态预览资源 | 模型直接操作部署凭据或平台管理接口 |
 
 工具调度由服务端阶段 allowlist 和路径/参数验证执行；模型返回的工具名和参数一律视为不可信输入。依赖安装要锁版本、限制网络与资源；下载执行脚本需单独策略，不默认允许。
 
@@ -146,8 +171,9 @@ MVP5 若启用跨对话记忆，另设 `MemoryStore`，只存有来源/时间/�
 
 - 将错误分为瞬时（429/超时/5xx）、可由 Agent 修复（编译、类型、测试、schema）、需用户补充（需求/权限/额度）和不可安全继续（越权、沙箱缺失）。瞬时错误最多 3 次指数退避加抖动；重试前检查取消和总预算。非幂等操作不自动盲重试。
 - 工具操作键 = `run_id + node + task_id + intent_hash`。写文件使用期望 hash/临时文件原子替换；建版本用唯一键；执行失败先读取操作账本和现有产物再决定重试。取消时停止子进程并保留日志与最后好版本。
-- 单 run 的默认初值：最多 30 次模型调用、2 轮修复、15 分钟、预算额度由配置设置；硬上限任一触发即停止。数值是待校准的产品保护阈值，不是平台额度。记录估算与实际 token/费用，模型无用量信息时保守估算。
+- 新 run 创建时持久化默认上限：80 次模型调用、100,000 Token、60 轮自动源码修复、**累计 15 分钟 Agent 执行时间**。任一硬预算耗尽，工作线程生成 `budget_extension` 卡并切换到 `awaiting_budget`；卡中记录安全原因、四项用量/上限、可增加额度与原阶段。等待用户确认时暂停执行计时，既不重置已用量，也不自动恢复。`POST /api/runs/{id}/budgets/extend` 校验拥有者、卡版本与幂等键，在事务中追加所选额度、决定和事件，再从原 LangGraph 检查点继续；旧 `budget_exceeded` run 需拥有者主动打开卡。每次可增加 40 次调用、100,000 Token、900 秒或 30 轮修复，当前耗尽项必须选中。连续无进展/同错循环仍提前停机。排队与服务停机不计时；执行中心跳持久化，重启清除旧计时起点并从最后心跳恢复。模型请求/构建检查剩余时长，版本入库前再检查；历史 run 无执行秒数时保留未知值，不用存续时间反推。见 [ADR-007](decisions/ADR-007-active-execution-budget.md)、[ADR-009](decisions/ADR-009-build-repair-harness.md)、[ADR-015](decisions/ADR-015-owner-confirmed-budget-extension.md)。数值是产品保护阈值，并非平台额度；模型无用量信息时保守估算。
 - `trace_id` 贯穿 API、node、模型与工具；span 包含输入引用 hash、输出摘要、耗时、重试、用量、错误码、版本。日志/事件脱敏，不能记录密钥或用户生成应用的私有业务数据。
+- `BuildTest` 将每次检查写入 `build_check_attempts`，以 `(run_id, attempt)` 幂等；失败检查另写 `build_check_failed` 安全警示，终态异常保持独立记录。独立运维服务只读专用结构化列，不读取原始事件 payload。CodeLoop 的局部修复反馈包含直接导入的未修改 TypeScript 文件作为有界只读接口参考；模型输出结构失败但已有可恢复构建候选时，拥有者可明确打开人工修复卡，不自动重试。见 [ADR-016](decisions/ADR-016-build-check-observability-and-recovery.md)。
 
 ## 7. 生成产物与预览隔离
 
@@ -175,5 +201,5 @@ MVP5 若启用跨对话记忆，另设 `MemoryStore`，只存有来源/时间/�
 - 正确性：同一幂等键重复提交只对应一个 run/确认/产物；同项目事件 `seq` 严格递增；跨项目读取被拒绝。以自动化 TC 验证。
 - 恢复：服务重启后项目、等待确认、最后好版本可恢复；SSE 中断后回放缺失事件。以断网/重启故障注入验证。
 - 体验：本地开发环境项目列表与已存卡片的 95% 请求在 2 秒内返回；生成期间每个 Node 转移后 3 秒内出现阶段事件。模型与构建耗时单独展示，不伪装为页面卡顿。该目标在校准阶段按实测调整。
-- 资源：单项目同时一个活动 run；每 run 最大模型调用、修复轮数与总时长见 §6。Runner 的 CPU、内存、磁盘与网络配额在选型 Spike 后量化，未量化前不允许公开执行不可信代码。
+- 资源：单项目同时一个活动或待决 run；自动修复最多 60 轮，连续无进展或错误复现提前停止，人工每次动作只执行一轮；所有人工轮次沿用同一 run 的模型调用、token 与 Agent 执行时长硬预算，等待人工期间暂停计时。Runner 的 CPU、内存、磁盘与网络配额在选型 Spike 后量化，未量化前不允许公开执行不可信代码。
 - 可观测：每次 run 能按 `trace_id` 串起确认、模型、工具、构建、预览与失败；日志脱敏；测试证据关联版本 ID。

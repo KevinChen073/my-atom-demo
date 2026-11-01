@@ -6,6 +6,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .budget import DEFAULT_LIMITS
+
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env", override=False)
@@ -21,10 +23,10 @@ class Settings:
     model_base_url: str = os.getenv("MODEL_BASE_URL", "https://api.deepseek.com")
     model_reasoning_effort: str = os.getenv("MODEL_REASONING_EFFORT", "high")
     model_code_reasoning_effort: str = os.getenv("MODEL_CODE_REASONING_EFFORT", "none")
-    max_model_calls: int = int(os.getenv("MAX_MODEL_CALLS", "30"))
-    max_total_tokens: int = int(os.getenv("MAX_TOTAL_TOKENS", "40000"))
-    max_run_seconds: int = int(os.getenv("MAX_RUN_SECONDS", "900"))
-    max_fix_rounds: int = int(os.getenv("MAX_FIX_ROUNDS", "2"))
+    max_model_calls: int = int(os.getenv("MAX_MODEL_CALLS", str(DEFAULT_LIMITS["model_calls"])))
+    max_total_tokens: int = int(os.getenv("MAX_TOTAL_TOKENS", str(DEFAULT_LIMITS["total_tokens"])))
+    max_run_seconds: int = int(os.getenv("MAX_RUN_SECONDS", str(DEFAULT_LIMITS["run_seconds"])))
+    max_fix_rounds: int = int(os.getenv("MAX_FIX_ROUNDS", str(DEFAULT_LIMITS["fix_rounds"])))
     preview_port: int = int(os.getenv("PREVIEW_PORT", "8001"))
     workbench_origin: str = os.getenv("WORKBENCH_ORIGIN", "http://127.0.0.1:8000")
 

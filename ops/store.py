@@ -6,6 +6,7 @@ import base64
 import json
 import sqlite3
 from contextlib import contextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Iterator
 from urllib.parse import quote
@@ -96,11 +97,38 @@ class ReadOnlyExceptionStore:
             if row is None:
                 return None
             timeline = []
+            run_metrics = None
+            build_checks = []
             if row["run_id"]:
+                metrics = db.execute(
+                    "SELECT created_at, active_seconds, model_calls, tokens_used FROM runs WHERE id=?",
+                    (row["run_id"],),
+                ).fetchone()
+                if metrics is not None:
+                    try:
+                        elapsed = max(0, int((datetime.fromisoformat(row["occurred_at"]) -
+                                              datetime.fromisoformat(metrics["created_at"])).total_seconds()))
+                    except (TypeError, ValueError):
+                        elapsed = None
+                    run_metrics = {"created_at": metrics["created_at"],
+                                   "elapsed_seconds": elapsed,
+                                   "active_seconds": int(metrics["active_seconds"]) if metrics["active_seconds"] is not None else None,
+                                   "model_calls": metrics["model_calls"],
+                                   "tokens_used": metrics["tokens_used"]}
                 # Deliberately avoid events.payload_json and all business content.
                 timeline = [dict(item) for item in db.execute(
                     "SELECT seq, type, at FROM events WHERE run_id=? ORDER BY seq DESC LIMIT 30",
                     (row["run_id"],),
                 ).fetchall()]
                 timeline.reverse()
-            return {"exception": dict(row), "timeline": timeline}
+                build_checks = [dict(item) for item in db.execute("""SELECT attempt, outcome, category,
+                    command, exit_code, duration_seconds, fix_round, model_calls, tokens_used,
+                    fingerprints_json, target_files_json, error_codes_json, stop_code, occurred_at
+                    FROM build_check_attempts WHERE run_id=? ORDER BY attempt DESC LIMIT 60""",
+                    (row["run_id"],)).fetchall()]
+                for item in build_checks:
+                    for name in ("fingerprints", "target_files", "error_codes"):
+                        item[name] = json.loads(item.pop(name + "_json"))
+                build_checks.reverse()
+            return {"exception": dict(row), "timeline": timeline, "run_metrics": run_metrics,
+                    "build_checks": build_checks}

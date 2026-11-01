@@ -30,8 +30,21 @@ function displayTime(value: string): string {
   }).format(date)
 }
 
+function displayDuration(seconds: number | null): string {
+  if (seconds === null) return '时间记录不可用'
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const remainder = seconds % 60
+  return `${hours ? `${hours} 小时 ` : ''}${minutes ? `${minutes} 分 ` : ''}${remainder} 秒`
+}
+
 function sourceLabel(source: string): string {
   return ({ agent: 'Agent', build: '构建', api: 'API' } as Record<string, string>)[source] ?? source
+}
+
+function buildCategoryLabel(category: string): string {
+  return ({ passed: '通过', source_compile: '源码编译/类型错误', dependency_install: '依赖安装失败',
+    environment_failure: '构建环境失败', build_unknown: '未归类错误' } as Record<string, string>)[category] ?? category
 }
 
 function errorMessage(status: number): string {
@@ -74,7 +87,7 @@ function AccessGate({ onUnlock, error }: { onUnlock: (key: string) => void; erro
       <div className="access-copy">
         <p className="eyebrow">INDEPENDENT OPERATIONS · 01</p>
         <h1>异常中心</h1>
-        <p>跨项目查看终态异常，依据 Trace ID 追踪原因与运行节点。</p>
+        <p>跨项目查看构建检查与终态异常，依据 Trace ID 追踪原因与运行节点。</p>
         <div className="access-boundary">
           <span className="boundary-symbol" aria-hidden="true">↗</span>
           <div><strong>独立运维入口</strong><span>仅从统一数据库读取，不连接主工作台会话。</span></div>
@@ -244,15 +257,42 @@ function Detail({
           <code>{state.value.exception.trace_id}</code>
           <p className="copy-feedback" role="status" aria-live="polite">{copyFeedback}</p>
         </div>
+        {state.value.run_metrics && <section className="run-metrics" aria-labelledby="run-metrics-heading">
+          <div className="section-heading"><h3 id="run-metrics-heading">运行指标</h3></div>
+          <dl className="detail-fields">
+            <div><dt>创建时间</dt><dd>{displayTime(state.value.run_metrics.created_at)}</dd></div>
+            <div><dt>执行时间</dt><dd>{state.value.run_metrics.active_seconds === null ? '未记录（旧任务）' : displayDuration(state.value.run_metrics.active_seconds)}</dd></div>
+            <div><dt>存续时间</dt><dd>{displayDuration(state.value.run_metrics.elapsed_seconds)}（含用户等待）</dd></div>
+            <div><dt>模型调用</dt><dd>{state.value.run_metrics.model_calls} 次</dd></div>
+            <div><dt>Token 用量</dt><dd>{state.value.run_metrics.tokens_used}</dd></div>
+          </dl>
+          {state.value.exception.code === 'budget_exceeded' && state.value.exception.reason === '本次任务达到调用、用量或时间预算上限。' &&
+            <p className="metrics-note">历史记录没有保存具体触发项和阈值；以上指标仅用于辅助判断。</p>}
+        </section>}
         <dl className="detail-fields">
           <div><dt>异常 ID</dt><dd className="mono">{state.value.exception.id}</dd></div>
           <div><dt>错误码</dt><dd className="mono">{state.value.exception.code}</dd></div>
           <div><dt>异常类型</dt><dd className="mono">{state.value.exception.exception_type}</dd></div>
           <div><dt>阶段</dt><dd>{state.value.exception.phase}</dd></div>
-          <div><dt>严重程度</dt><dd>{state.value.exception.severity === 'error' ? '错误' : state.value.exception.severity}</dd></div>
+          <div><dt>严重程度</dt><dd>{state.value.exception.severity === 'error' ? '错误' : state.value.exception.severity === 'warning' ? '检查失败，可能继续修复' : state.value.exception.severity}</dd></div>
           <div><dt>项目 ID</dt><dd className="mono">{state.value.exception.project_id ?? '无关联'}</dd></div>
           <div><dt>Run ID</dt><dd className="mono">{state.value.exception.run_id ?? '无关联'}</dd></div>
         </dl>
+        {state.value.build_checks.length > 0 && <section className="timeline" aria-labelledby="build-checks-heading">
+          <div className="section-heading"><h3 id="build-checks-heading">构建检查重试</h3><span>最近 {state.value.build_checks.length} 次</span></div>
+          <ol>{state.value.build_checks.map((check) => <li key={check.attempt}>
+            <span className="timeline-node" aria-hidden="true" />
+            <span className="timeline-event">
+              <strong>第 {check.attempt} 次 · {check.outcome === 'passed' ? '通过' : '未通过'} · {buildCategoryLabel(check.category)}</strong>
+              <small>{check.command} · exit {check.exit_code ?? '未知'} · {check.duration_seconds ?? '未知'} 秒</small>
+              <small>修复轮次 {check.fix_round} · 错误码 {check.error_codes.join('、') || '未识别'} · 指纹 {check.fingerprints.length} 个</small>
+              <small>目标文件 {check.target_files.join('、') || '历史未记录或未定位'} · 停止原因 {check.stop_code || '无'}</small>
+              <small>当时用量 {check.model_calls ?? '历史未记录'} 次模型调用 / {check.tokens_used ?? '历史未记录'} Token</small>
+              {check.fingerprints.length > 0 && <details><summary>查看错误指纹</summary><code>{check.fingerprints.join('、')}</code></details>}
+            </span>
+            <time dateTime={check.occurred_at}>{displayTime(check.occurred_at)}</time>
+          </li>)}</ol>
+        </section>}
         <section className="timeline" aria-labelledby="timeline-heading">
           <div className="section-heading"><h3 id="timeline-heading">关联事件</h3><span>最多 30 条</span></div>
           {state.value.timeline.length === 0 ? <p className="timeline-empty">没有可展示的事件记录。</p> : <ol>
@@ -342,7 +382,7 @@ export function OperationsApp() {
       <header className="topbar"><Brand /><span className="topbar-context">独立运维服务 <span className="context-dot" aria-hidden="true" /> 只读数据库</span></header>
       {!key ? <AccessGate key={accessError} error={accessError} onUnlock={(input) => { setAccessError(''); setKey(input) }} /> : <main className="console-layout">
         <div className="page-heading">
-          <div><p className="eyebrow">SYSTEM OBSERVABILITY / EXCEPTIONS</p><h1>异常中心</h1><p>跨项目终态异常记录。选择记录查看安全摘要与关联事件。</p></div>
+          <div><p className="eyebrow">SYSTEM OBSERVABILITY / EXCEPTIONS</p><h1>异常中心</h1><p>跨项目构建检查警示与终态异常。选择记录查看安全摘要与关联事件。</p></div>
           <div className="heading-actions"><span className="read-only-badge"><span aria-hidden="true">◉</span>只读模式</span><button type="button" className="text-button" onClick={() => lock()}>退出运维</button></div>
         </div>
         <Filters initial={filters} onApply={applyFilters} />
@@ -351,7 +391,7 @@ export function OperationsApp() {
             <div className="list-header"><div><p className="panel-kicker">EXCEPTION RECORDS</p><h2 id="records-heading">异常记录</h2></div><div className="list-header-right">{listState.kind === 'ready' && <span>最近读取 {displayTime(listState.readAt.toISOString())}</span>}<button type="button" className="secondary-button" onClick={() => setRefresh((value) => value + 1)} disabled={listState.kind === 'loading'}>刷新</button></div></div>
             {listState.kind === 'loading' && <div className="list-status" role="status" aria-busy="true"><span className="loading-line" /><span className="loading-line" /><span className="loading-line" /><p>正在读取异常记录…</p></div>}
             {listState.kind === 'error' && <div className="list-status error-status" role="alert"><span className="status-symbol" aria-hidden="true">!</span><h3>读取失败</h3><p>{errorMessage(listState.status)}</p><button type="button" className="secondary-button" onClick={() => setRefresh((value) => value + 1)}>重试读取</button></div>}
-            {listState.kind === 'ready' && listState.value.items.length === 0 && <div className="list-status empty-status" role="status"><span className="status-symbol" aria-hidden="true">◇</span><h3>{Object.values(filters).some(Boolean) ? '没有匹配的异常' : '暂无异常记录'}</h3><p>{Object.values(filters).some(Boolean) ? '调整筛选条件后重新查询。' : '统一数据库当前没有终态异常记录。'}</p></div>}
+            {listState.kind === 'ready' && listState.value.items.length === 0 && <div className="list-status empty-status" role="status"><span className="status-symbol" aria-hidden="true">◇</span><h3>{Object.values(filters).some(Boolean) ? '没有匹配的异常' : '暂无异常记录'}</h3><p>{Object.values(filters).some(Boolean) ? '调整筛选条件后重新查询。' : '统一数据库当前没有构建警示或终态异常。'}</p></div>}
             {listState.kind === 'ready' && listState.value.items.length > 0 && <RecordList records={listState.value.items} selectedId={selectedId} onSelect={setSelectedId} />}
             {listState.kind === 'ready' && (pageIndex > 0 || listState.value.next_cursor) && <div className="pagination"><span>第 {pageIndex + 1} 页 · 本页 {listState.value.items.length} 条</span><div><button type="button" className="secondary-button" disabled={pageIndex === 0} onClick={() => { setPageIndex((value) => value - 1); setSelectedId(null) }}>上一页</button><button type="button" className="secondary-button" disabled={!listState.value.next_cursor} onClick={() => { if (listState.value.next_cursor) nextPage(listState.value.next_cursor) }}>下一页</button></div></div>}
           </section>

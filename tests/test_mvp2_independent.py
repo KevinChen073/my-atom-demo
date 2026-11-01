@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import socket
+import sqlite3
 import threading
 import time
 from pathlib import Path
@@ -27,37 +29,22 @@ TODO_SCHEMA = {"name": "todos", "fields": [
 ]}
 
 
-class TodoFakeModel:
-    """Deterministic model output; the workflow still writes and builds real files."""
-
-    def check_limits(self, run_id: str) -> None:
-        return None
+class TodoFakeModel(FakeModel):
+    """Deterministic localStorage app through the real build pipeline."""
 
     def generate(self, run_id: str, node: str, cache_key: str, system: str, user: str, *, max_tokens: int = 4000):
-        if node == "clarify":
-            return {"summary": "持久化待办应用", "assumptions": ["单页"], "questions": []}
         if node == "plan":
             return {"title": "待办应用", "pages": [{"name": "待办", "purpose": "管理待办任务"}],
-                    "features": ["新增、完成和删除待办"], "data_model": ["服务端 todos 实体"],
-                    "acceptance": ["刷新后待办仍存在"], "tasks": ["实现待办页面与受控数据 API"],
-                    "limitations": [], "entities": [TODO_SCHEMA]}
+                    "features": ["新增、完成和删除待办"], "data_model": ["localStorage 任务"],
+                    "acceptance": ["刷新后待办仍存在"], "tasks": ["实现本地待办页面"], "limitations": []}
         if node == "code_loop":
-            return {"app_tsx": """import { useEffect, useState } from 'react'
-import { listRecords, createRecord, updateRecord, deleteRecord, type AppRecord } from './appData'
-import './App.css'
-export default function App() {
-  const [rows, setRows] = useState<AppRecord[]>([])
-  const [title, setTitle] = useState('')
-  const [error, setError] = useState('')
-  async function load() { try { setRows(await listRecords('todos')) } catch (e) { setError(String(e)) } }
-  useEffect(() => { void load() }, [])
-  async function add() { if (!title.trim()) return; try { await createRecord('todos', { title: title.trim(), completed: false }); setTitle(''); await load() } catch (e) { setError(String(e)) } }
-  async function toggle(row: AppRecord) { try { await updateRecord('todos', row.id, { completed: !row.completed }); await load() } catch (e) { setError(String(e)) } }
-  async function remove(row: AppRecord) { try { await deleteRecord('todos', row.id); await load() } catch (e) { setError(String(e)) } }
-  return <main><h1>待办应用</h1><input aria-label="任务名称" value={title} onChange={e => setTitle(e.target.value)} /><button onClick={add}>新增</button><p role="alert">{error}</p><ul>{rows.map(row => <li key={row.id}><span>{String(row.title)} {row.completed ? '已完成' : '未完成'}</span><button onClick={() => toggle(row)}>切换完成</button><button onClick={() => remove(row)}>删除</button></li>)}</ul></main>
-}
-""", "app_css": "body { font-family: sans-serif; } main { margin: 2rem auto; max-width: 40rem; }"}
-        raise AssertionError(node)
+            return {"files": {
+                "src/App.tsx": "import './app.css'\nimport { useAppState } from './hooks/useAppState'\nexport default function App() { const { rows, title, setTitle, add, toggle, remove, error } = useAppState(); return <main><h1>待办应用</h1><input aria-label=\"任务名称\" value={title} onChange={e => setTitle(e.target.value)} /><button onClick={add}>新增</button><p role=\"alert\">{error}</p><ul>{rows.map(row => <li key={row.id}><span>{row.title} {row.completed ? '已完成' : '未完成'}</span><button onClick={() => toggle(row.id)}>切换完成</button><button onClick={() => remove(row.id)}>删除</button></li>)}</ul></main> }",
+                "src/hooks/useAppState.ts": "import { useState } from 'react'\ntype Row = { id: string; title: string; completed: boolean }\nexport function useAppState() { const [rows, setRows] = useState<Row[]>(() => { try { return JSON.parse(localStorage.getItem('todos') || '[]') as Row[] } catch { return [] } }); const [title, setTitle] = useState(''); const [error, setError] = useState(''); function save(next: Row[]) { try { localStorage.setItem('todos', JSON.stringify(next)); setRows(next); setError('') } catch { setError('本地保存失败') } } function add() { if (!title.trim()) return; save([...rows, { id: crypto.randomUUID(), title: title.trim(), completed: false }]); setTitle('') } function toggle(id: string) { save(rows.map(row => row.id === id ? { ...row, completed: !row.completed } : row)) } function remove(id: string) { save(rows.filter(row => row.id !== id)) } return { rows, title, setTitle, add, toggle, remove, error } }",
+                "src/app.css": "body { font-family: sans-serif; } main { margin: 2rem auto; max-width: 40rem; }",
+                "readme.md": "# 待办应用\n任务保存在项目预览域 localStorage。",
+            }}
+        return super().generate(run_id, node, cache_key, system, user, max_tokens=max_tokens)
 
 
 def seed_version(store: Store, data_dir: Path, owner_token: str, title: str) -> tuple[str, str, str]:
@@ -66,7 +53,7 @@ def seed_version(store: Store, data_dir: Path, owner_token: str, title: str) -> 
     store.update_run(run["id"], status="completed", phase="Done")
     version = store.save_version(project["id"], run["id"], {
         "template": "react-vite-v1", "build": {"ok": True, "steps": []},
-        "files": [], "entities": [TODO_SCHEMA],
+        "files": [],
     })
     dist = data_dir / "artifacts" / project["id"] / run["id"] / "dist"
     (dist / "assets").mkdir(parents=True)
@@ -75,20 +62,20 @@ def seed_version(store: Store, data_dir: Path, owner_token: str, title: str) -> 
     return project["id"], run["id"], version["id"]
 
 
-def open_preview(main: TestClient, preview: TestClient, version_id: str) -> None:
+def open_preview(main: TestClient, preview: TestClient, version_id: str) -> str:
     issued = main.get(f"/api/versions/{version_id}/preview")
     assert issued.status_code == 200, issued.text
     url = issued.json()["url"]
-    assert urlsplit(url).hostname == "127.0.0.1"
+    assert urlsplit(url).hostname == preview.base_url.host
     assert urlsplit(url).port == 8001
     assert urlsplit(url).path == f"/open/{version_id}"
     first = preview.get(urlsplit(url).path + "?" + urlsplit(url).query, follow_redirects=False)
     assert first.status_code == 303
-    assert first.headers["location"] == f"/v/{version_id}/"
-    assert "myatom_preview_" in first.headers["set-cookie"]
-    assert "httponly" in first.headers["set-cookie"].lower()
-    assert "samesite=strict" in first.headers["set-cookie"].lower()
+    location = first.headers["location"]
+    assert location.startswith("/s/") and location.endswith(f"/v/{version_id}/")
+    assert "set-cookie" not in first.headers
     assert preview.get(urlsplit(url).path + "?" + urlsplit(url).query, follow_redirects=False).status_code == 401
+    return location
 
 
 def test_sse_replay_order_cursor_and_guest_authorization(tmp_path: Path):
@@ -170,62 +157,39 @@ def test_sse_live_delivery_then_reconnect_without_duplicates(tmp_path: Path):
         assert not thread.is_alive()
 
 
-def test_preview_single_use_ticket_static_scope_and_crud_persistence(tmp_path: Path):
+def test_preview_single_use_ticket_static_scope_and_project_origins(tmp_path: Path):
     settings = Settings(data_dir=tmp_path, model_api_key="test-only", preview_port=8001)
     store = Store(settings.app_db)
     a_project, _, a_version = seed_version(store, tmp_path, "owner-a", "A")
     b_project, _, b_version = seed_version(store, tmp_path, "owner-b", "B")
     main_app, preview_app = create_app(settings, model=FakeModel()), create_preview_app(settings)
-    with TestClient(main_app) as main_a, TestClient(main_app) as main_b, TestClient(preview_app, base_url="http://127.0.0.1:8001") as preview_a, TestClient(preview_app, base_url="http://127.0.0.1:8001") as preview_b:
+    host_a = "p-" + a_project.replace("-", "") + ".localhost"
+    host_b = "p-" + b_project.replace("-", "") + ".localhost"
+    with TestClient(main_app) as main_a, TestClient(main_app) as main_b, TestClient(preview_app, base_url=f"http://{host_a}:8001") as preview_a, TestClient(preview_app, base_url=f"http://{host_b}:8001") as preview_b:
         main_a.cookies.set("myatom_guest", "owner-a")
         main_b.cookies.set("myatom_guest", "owner-b")
         assert main_b.get(f"/api/versions/{a_version}/preview").status_code == 404
-        assert preview_a.get(f"/v/{a_version}/").status_code == 401
-        open_preview(main_a, preview_a, a_version)
-        open_preview(main_b, preview_b, b_version)
-        index = preview_a.get(f"/v/{a_version}/")
+        assert preview_a.get(f"/v/{a_version}/").status_code == 404
+        a_path = open_preview(main_a, preview_a, a_version)
+        b_path = open_preview(main_b, preview_b, b_version)
+        index = preview_a.get(a_path)
         assert index.status_code == 200
         assert "./assets/app.js" in index.text
-        assert "default-src 'none'" in index.headers["content-security-policy"]
-        assert preview_a.get(f"/v/{a_version}/assets/app.js").status_code == 200
+        assert "connect-src 'none'" in index.headers["content-security-policy"]
+        assert preview_a.get(a_path + "assets/app.js").status_code == 200
         assert preview_a.get("/api/projects").status_code == 404
-        assert preview_a.get(f"/v/{b_version}/").status_code == 401
-        route_a = f"/data/{a_version}/todos"
-        route_b = f"/data/{b_version}/todos"
-        origin = {"Origin": "http://127.0.0.1:8001"}
-        create_body = {"data": {"title": "验收任务 A", "completed": False}}
-        create_headers = {**origin, "Idempotency-Key": "test-create-a-1"}
-        created = preview_a.post(route_a, json=create_body, headers=create_headers)
-        assert created.status_code == 201, created.text
-        record_id = created.json()["id"]
-        replay = preview_a.post(route_a, json=create_body, headers=create_headers)
-        assert replay.status_code == 201 and replay.json()["id"] == record_id
-        assert len(preview_a.get(route_a).json()) == 1
-        conflict = preview_a.post(route_a, json={"data": {"title": "另一任务", "completed": False}}, headers=create_headers)
-        assert conflict.status_code == 409
-        assert preview_a.get(route_a).json()[0]["title"] == "验收任务 A"
-        updated = preview_a.put(f"{route_a}/{record_id}", json={"data": {"completed": True}}, headers=origin)
-        assert updated.status_code == 200 and updated.json()["completed"] is True
-        patched = preview_a.patch(f"{route_a}/{record_id}", json={"data": {"title": "PATCH 后的任务"}}, headers=origin)
-        assert patched.status_code == 200 and patched.json()["title"] == "PATCH 后的任务"
-        assert patched.json()["completed"] is True
-        assert preview_b.get(route_b).json() == []
-        assert preview_b.get(route_a).status_code == 401
-        assert preview_a.get(route_b).status_code == 401
-        assert preview_a.post(route_a, json={"data": {"title": "evil", "completed": False}}, headers={"Origin": "https://evil.invalid"}).status_code == 403
-        assert preview_a.post(route_a, json={"data": {"title": "missing completed"}}, headers=origin).status_code == 422
-        assert preview_a.post(route_a, json={"data": {"title": "wrong type", "completed": "yes"}}, headers=origin).status_code == 422
-        assert preview_a.post(route_a, json={"data": {"title": "extra", "completed": False, "secret": "x"}}, headers=origin).status_code == 422
-        assert preview_a.get(f"/data/{a_version}/unknown").status_code == 404
-        preview_cookie = preview_a.cookies.get("myatom_preview_" + a_version.replace("-", ""))
-        with TestClient(create_preview_app(settings), base_url="http://127.0.0.1:8001") as reopened:
-            reopened.cookies.set("myatom_preview_" + a_version.replace("-", ""), preview_cookie)
-            rows = reopened.get(route_a)
-            assert rows.status_code == 200 and rows.json()[0]["completed"] is True
-            assert rows.json()[0]["title"] == "PATCH 后的任务"
-            assert reopened.delete(f"{route_a}/{record_id}", headers=origin).status_code == 204
-            assert reopened.get(route_a).json() == []
-        assert a_project != b_project
+        assert preview_a.get(b_path).status_code in {401, 403}
+        assert preview_b.get(a_path).status_code in {401, 403}
+        assert preview_a.get(f"/data/{a_version}/todos").status_code == 404
+        assert host_a != host_b
+        session_token = a_path.split("/")[2]
+        with sqlite3.connect(tmp_path / "preview_access.sqlite3") as db:
+            db.execute("UPDATE preview_sessions SET expires_at=? WHERE token_hash=?",
+                       ("2000-01-01T00:00:00+00:00", hashlib.sha256(session_token.encode()).hexdigest()))
+        expired = preview_a.get(a_path)
+        assert expired.status_code == 401
+        assert expired.headers["content-type"].startswith("text/html")
+        assert "重新载入" in expired.text
 
 
 def test_generated_todo_app_has_real_build_and_preview_manifest(tmp_path: Path):
@@ -239,10 +203,10 @@ def test_generated_todo_app_has_real_build_and_preview_manifest(tmp_path: Path):
         clarification = wait_status(client, run_id, "awaiting_clarification")
         assert client.post(f"/api/runs/{run_id}/decisions", json={
             "card_id": clarification["card_id"], "spec_version": clarification["spec_version"],
-            "action": "confirm_clarification", "answers": {},
+            "action": "confirm_clarification", "answers": {"q1": "0"},
         }).status_code == 202
         plan = wait_status(client, run_id, "awaiting_plan")
-        assert plan["card"]["payload"]["entities"] == [TODO_SCHEMA]
+        assert plan["card"]["payload"]["entities"] == []
         assert client.post(f"/api/runs/{run_id}/decisions", json={
             "card_id": plan["card_id"], "spec_version": plan["spec_version"], "action": "approve_plan",
         }).status_code == 202
@@ -252,7 +216,7 @@ def test_generated_todo_app_has_real_build_and_preview_manifest(tmp_path: Path):
         assert len(versions) == 1
         version = versions[0]
         assert version["manifest"]["build"]["ok"] is True
-        assert version["manifest"]["entities"] == [TODO_SCHEMA]
+        assert version["manifest"]["preview"]["ok"] is True
         source = client.get(f"/api/versions/{version['id']}/files/src/App.tsx")
-        assert source.status_code == 200 and "createRecord('todos'" in source.text
+        assert source.status_code == 200 and "useAppState" in source.text
         assert client.get(f"/api/versions/{version['id']}/preview").status_code == 200
