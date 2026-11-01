@@ -1,5 +1,7 @@
 # MYATOM 系统架构（v0.1）
 
+> `atom-deploy` 分支的单进程静态运行路径见 [ADR-018](decisions/ADR-018-atom-single-process-static-branch.md) 和 [部署说明](ATOM-DEPLOY.md)。本文件以下 React/Vite、独立异常后台和 Azure Runner 描述仍是原基线；`APP_ENV=atom` 的实际差异由 ADR-018 及专用代码路径界定。
+
 状态：设计基线，2026-10-30；2026-10-31 按用户确认的 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 修订生成交付物边界；2026-11-01 按 [ADR-006](decisions/ADR-006-single-main-run-scope.md) 收束为单次主线交付，并按 [ADR-010](decisions/ADR-010-structured-card-single-send.md) 增加当前等待卡的消息解释层。公开交付主路径已按 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md) 选定 GitHub → Azure，生产适配尚未完成；Atoms Spike 仅保留可选迁移证据。产品范围见 [PRD](PRD.md)，固定与待定边界见 [ADR-001](decisions/ADR-001-baseline.md)，冲突处理见 [ADR-002](decisions/ADR-002-change-control.md)。
 
 ## 1. 原则与系统边界

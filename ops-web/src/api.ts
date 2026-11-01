@@ -43,11 +43,12 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, key: string, signal?: AbortSignal): Promise<T> {
+  const integrated = window.location.pathname.startsWith('/ops')
   const response = await fetch(path, {
     method: 'GET',
-    headers: { 'X-Operations-Key': key },
+    headers: integrated ? {} : { 'X-Operations-Key': key },
     cache: 'no-store',
-    credentials: 'omit',
+    credentials: integrated ? 'same-origin' : 'omit',
     signal,
   })
   if (!response.ok) throw new ApiError(response.status)

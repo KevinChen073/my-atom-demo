@@ -23,6 +23,8 @@ from .model import BudgetExceeded, ModelGateway, ModelOutputError, RunCancelled
 from .exceptions import (MODEL_OUTPUT_REASONS, PLAN_VALIDATION_REASONS, PlanValidationError, REASONS,
                          SourceValidationError, cause_chain, classify, plan_validation_error_code, safe_phase)
 from .runner import LocalRunner
+from .atom_runner import AtomRunner
+from . import atom_static
 from .settings import Settings
 from .source_harness import (GENERATED_FILE, repair_feedback, source_contract_prompt,
                              source_signatures, source_validation_reason, SOURCE_FAILURE_REASONS,
@@ -204,7 +206,10 @@ class Workflow:
     def __init__(self, settings: Settings, store: Store, model: ModelGateway | Any = None):
         self.settings, self.store = settings, store
         self.model = model or ModelGateway(settings, store)
-        self.runner = LocalRunner(settings, store)
+        self.runner = AtomRunner(settings, store) if settings.app_env == "atom" else LocalRunner(settings, store)
+        self.generated_file = atom_static.GENERATED_FILE if settings.app_env == "atom" else GENERATED_FILE
+        self.source_prompt = atom_static.source_contract_prompt if settings.app_env == "atom" else source_contract_prompt
+        self.source_feedback = atom_static.repair_feedback if settings.app_env == "atom" else repair_feedback
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
         if settings.database_url:
             import psycopg
@@ -314,7 +319,7 @@ class Workflow:
         self.store.update_run(state["run_id"], status="clarifying", phase="ClarityGate", event_type="phase", event_payload={"phase": "ClarityGate"})
         raw = self.model.generate(
             state["run_id"], "clarity_gate", f"card{state['clarification_card_count']}-rev{state.get('clarify_revision', 0)}",
-            "判断已确认的需求是否足够生成固定 React+TypeScript+Vite 应用。只输出 JSON：complete 布尔值、missing 字符串数组。不要因非关键细节继续追问；如缺少影响实现的约束，complete=false。业务存储只允许预览 origin 的 localStorage。",
+            f"判断已确认的需求是否足够生成固定的{'静态 HTML+CSS+JavaScript' if self.settings.app_env == 'atom' else 'React+TypeScript+Vite'} 应用。只输出 JSON：complete 布尔值、missing 字符串数组。不要因非关键细节继续追问；如缺少影响实现的约束，complete=false。业务存储只允许预览 origin 的 localStorage。",
             f"需求：{state['request_text']}\n已确认问答：{dumps(state.get('clarification_history', []))}\n请判断是否完整。",
             max_tokens=600,
         )
@@ -356,11 +361,12 @@ class Workflow:
         if incompatible_request:
             raise PlanValidationError("incompatible_request")
         system = ("你是 Web 应用架构师。输出 JSON：title、pages（name/purpose）、features、data_model、acceptance、tasks、limitations。"
-                  "数组成员除 pages 外均为字符串。固定 React+TypeScript+Vite；生成应用业务数据只使用其独立预览 origin 的 localStorage，"
+                  f"数组成员除 pages 外均为字符串。固定{'无构建步骤的 HTML+CSS+JavaScript' if self.settings.app_env == 'atom' else 'React+TypeScript+Vite'}；生成应用业务数据只使用其独立预览 origin 的 localStorage，"
                   "同一项目跨版本复用该 origin。不得设计服务端业务 CRUD、SQL、缓存、外部接口或第三方库。"
                   "若需求要刷新后保留业务数据，data_model 必须逐项写明由 localStorage 保存的字段，acceptance 必须包含刷新读回；不能把数据模型留空或只写页面状态。"
                   "limitations 不得与前述存储方案冲突；浏览器清除存储或更换浏览器后数据无法恢复，业务数据不随代码版本回滚。"
-                  "源码采用 src/App.tsx 入口、src/app.css 样式入口，状态与业务逻辑在 src/hooks/，多组件在 src/components/；根目录 readme.md 描述项目。计划须具体可测试。")
+                  + ("源码采用 index.html 入口、style.css 样式、app.js 原生脚本，根目录 readme.md 描述项目；不使用 Node 或构建工具。" if self.settings.app_env == "atom" else
+                   "源码采用 src/App.tsx 入口、src/app.css 样式入口，状态与业务逻辑在 src/hooks/，多组件在 src/components/；根目录 readme.md 描述项目。") + "计划须具体可测试。")
         prompt = (f"原始需求：{state['request_text']}\n已确认问答：{dumps(state.get('clarification_history', []))}"
                   f"\n计划修改意见：{state.get('plan_feedback', '')}"
                   "\n请输出完整 Build Plan JSON。")
@@ -371,6 +377,8 @@ class Workflow:
             self._check_cancel(run_id)
             try:
                 plan = normalize_plan(raw)
+                if self.settings.app_env == "atom":
+                    plan["template"] = "Static HTML + CSS + JavaScript"
                 answered_text = "；".join(str(item.get("answer", "")) for item in state.get("clarification_history", []) if isinstance(item, dict))
                 persistence_pattern = re.compile(r"localStorage|持久|保存到|刷新.{0,12}(?:保留|读回|恢复|仍|存在)", re.IGNORECASE)
                 persistence_requested = any(
@@ -427,16 +435,16 @@ class Workflow:
         base = self.store.cache_get(run_id, "source_candidate", base_ref) if base_ref else None
         targets = feedback.get("target_files") or []
         if not (base and isinstance(base.get("files"), dict) and targets and
-                all(isinstance(path, str) and GENERATED_FILE.fullmatch(path) for path in targets)):
+                all(isinstance(path, str) and self.generated_file.fullmatch(path) for path in targets)):
             targets = []
         targets = sorted(set(targets))
-        base_system = source_contract_prompt(targets)
+        base_system = self.source_prompt(targets)
         prompt = f"批准计划：{dumps(state['plan'])}\n原始需求：{state['request_text']}\n已确认问答：{dumps(state.get('clarification_history', []))}"
         if feedback:
             prompt += f"\n上次检查的问题与修复反馈：{dumps(feedback.get('issues', []))}"
         if targets:
             prompt += f"\n仅重新生成这些文件的完整内容：{dumps(targets)}。其余候选文件保持原样；请遵守现有文件的导入路径。"
-            references = repair_interface_context(base["files"], targets)
+            references = {} if self.settings.app_env == "atom" else repair_interface_context(base["files"], targets)
             if references:
                 prompt += ("\n以下是当前候选中保持不变的导入依赖，只供核对导出、props 和 hook 返回值；"
                            f"不得输出或修改这些文件：{dumps(references)}")
@@ -495,7 +503,7 @@ class Workflow:
             })
             return {"source_ok": True, "source_candidate_ref": candidate_ref, "source_feedback": {},
                     "code_feedback": {}, "source_stop_code": "", "stop_reason": "", "written_files": written}
-        feedback = repair_feedback(issues, origin="source")
+        feedback = self.source_feedback(issues, origin="source")
         history = self._repair_history(state)
         history.append(source_signatures(issues))
         hard_stop = any(issue["code"] == "unsafe_capability" for issue in issues)

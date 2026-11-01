@@ -1,5 +1,7 @@
 # MYATOM · MVP2 本地开发版
 
+> `atom-deploy` 分支的单 Python 进程、Token 登录及无 Node 静态生成入口见 [Atoms 部署说明](docs/ATOM-DEPLOY.md) 与 [ADR-018](docs/decisions/ADR-018-atom-single-process-static-branch.md)。下文是原本地/Azure 基线的运行说明。
+
 一个本地可运行的 Atoms 类应用生成工作台。用户创建项目、确认需求澄清和 Build Plan 后，单 Agent 在固定的 React + TypeScript + Vite 模板中生成代码，实际执行类型检查与构建，并保存可恢复的项目版本。
 
 产品范围见 [PRD](docs/PRD.md)，架构见 [系统设计](docs/ARCHITECTURE.md)，本轮交互决定见 [ADR-010](docs/decisions/ADR-010-structured-card-single-send.md)，验收见 [单一发送 TC](tests/cases/SINGLE-SEND.md)。工作台视觉以 [V7 设计入口](design/design.md) 为准。首页示例由 [目录](examples/catalog.json) 定义，交互见 [示例 UI](docs/EXAMPLE-UI.md)，验收用例见 [示例 TC](tests/cases/EXAMPLES.md)。修改基线前阅读 [AGENTS.md](AGENTS.md) 和 [ADR-002](docs/decisions/ADR-002-change-control.md)。Atoms 调研与 Spike 过程记录保存在本机 `D:\AI\ATOM笔试\docs`。

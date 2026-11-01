@@ -1,5 +1,7 @@
 # ADR-014：GitHub 源部署、Atoms 迁移与模型凭证方案
 
+> `atom-deploy` 分支例外：用户于 2026-11-01 另行确认受限 Atoms 适配，见 [ADR-018](ADR-018-atom-single-process-static-branch.md)。本 ADR 的 GitHub → Azure 主路线仍用于其他分支；这条 Atoms 分支不能据此被称为已上线。
+
 - 状态：**Accepted（部署路线于 2026-11-01 经用户选择）**；尚未完成生产适配或 Azure 发布。
 - 详细流程与验收：[GitHub 到 Atoms 部署方案](../ATOM-GITHUB-TO-DEPLOYMENT-PROPOSAL.md)。
 - 受约束基线：[PRD](../PRD.md)、[系统架构](../ARCHITECTURE.md)、[ADR-001](ADR-001-baseline.md)、[ADR-002](ADR-002-change-control.md)、[ADR-004](ADR-004-generated-deliverable-boundaries.md)。

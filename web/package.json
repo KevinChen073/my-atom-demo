@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
-    "build": "tsc -b && vite build"
+    "build": "tsc -b && vite build",
+    "build:atom": "tsc -b && vite build --outDir=../atom-static/web --emptyOutDir"
   },
   "dependencies": {
     "react": "19.3.1",

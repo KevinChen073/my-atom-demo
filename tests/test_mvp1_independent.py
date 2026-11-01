@@ -92,6 +92,10 @@ def test_long_human_wait_does_not_consume_execution_budget(tmp_path: Path):
 def test_active_segments_accumulate_and_restart_excludes_downtime(tmp_path: Path):
     store, run_id = new_store_run(tmp_path)
     settings = Settings(data_dir=tmp_path, model_api_key="test-only", max_run_seconds=5)
+    # Run limits are snapshotted when the run is created; configure that
+    # persisted limit rather than assuming later Settings override it.
+    with sqlite3.connect(store.path) as db:
+        db.execute("UPDATE runs SET max_run_seconds=5 WHERE id=?", (run_id,))
     gateway = ModelGateway(settings, store)
     assert store.begin_execution(run_id)
     with sqlite3.connect(store.path) as db:

@@ -13,12 +13,12 @@ from uuid import UUID
 from .store import now
 
 
-def preview_host(project_id: str) -> str:
-    return f"p-{UUID(project_id).hex}.localhost"
+def preview_host(project_id: str, domain: str = "localhost") -> str:
+    return f"p-{UUID(project_id).hex}.{domain}"
 
 
-def preview_origin(project_id: str, port: int) -> str:
-    return f"http://{preview_host(project_id)}:{port}"
+def preview_origin(project_id: str, port: int | None, domain: str = "localhost", scheme: str = "http") -> str:
+    return f"{scheme}://{preview_host(project_id, domain)}" + (f":{port}" if port is not None else "")
 
 
 def _hash(value: str) -> str:

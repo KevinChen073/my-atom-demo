@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1 --port 5174",
     "build": "tsc -b && vite build",
+    "build:atom": "tsc -b && vite build --base=/ops/ --outDir=../atom-static/ops-web --emptyOutDir",
     "preview": "vite preview --host 127.0.0.1 --port 4174"
   },
   "dependencies": {

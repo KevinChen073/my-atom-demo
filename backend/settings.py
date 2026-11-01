@@ -30,6 +30,9 @@ class Settings:
     max_fix_rounds: int = int(os.getenv("MAX_FIX_ROUNDS", str(DEFAULT_LIMITS["fix_rounds"])))
     preview_port: int = int(os.getenv("PREVIEW_PORT", "8001"))
     workbench_origin: str = os.getenv("WORKBENCH_ORIGIN", "http://127.0.0.1:8000")
+    atom_access_token: str = field(default_factory=lambda: os.getenv("ATOM_ACCESS_TOKEN", ""), repr=False)
+    atom_preview_domain: str = os.getenv("ATOM_PREVIEW_DOMAIN", "").strip().lower()
+    atom_preview_scheme: str = os.getenv("ATOM_PREVIEW_SCHEME", "https").strip().lower()
 
     @property
     def app_db(self) -> Path:

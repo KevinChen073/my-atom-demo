@@ -1,5 +1,7 @@
 # MYATOM 产品需求文档（PRD v0.1）
 
+> `atom-deploy` 是用户另行授权的受限部署分支：[ADR-018](decisions/ADR-018-atom-single-process-static-branch.md) 在该分支的 `APP_ENV=atom` 下将生成模板改为静态 HTML/CSS/JS、取消 Node 构建并合并服务进程。下文的 React/Vite、构建及完整预览要求仍是原交付基线；Atoms 分支未通过 [专用 TC](../tests/cases/DEPLOYMENT-ATOM.md) 前不声称满足相应 MVP 出口。
+
 状态：设计基线，2026-10-30；2026-10-31 用户明确将 MYATOM 建造工作台调整为桌面优先，取消移动端适配与验收，并确认生成交付物的持久化及回滚边界（见 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md)）；2026-11-01 确认单次主线交付范围及[单一发送交互](decisions/ADR-010-structured-card-single-send.md)。架构实现见 [系统架构](ARCHITECTURE.md)，变更规则见 [ADR-002](decisions/ADR-002-change-control.md)。平台前置验证的过程记录在本机 `D:\AI\ATOM笔试\docs\ATOMS-SPIKES.md`；它不随代码仓库分发。
 
 ## 1. 目标与定位

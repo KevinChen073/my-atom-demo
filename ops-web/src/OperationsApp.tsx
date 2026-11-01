@@ -305,7 +305,8 @@ function Detail({
 }
 
 export function OperationsApp() {
-  const [key, setKey] = useState<string | null>(null)
+  const integrated = window.location.pathname.startsWith('/ops')
+  const [key, setKey] = useState<string | null>(integrated ? 'atom-session' : null)
   const [accessError, setAccessError] = useState('')
   const [filters, setFilters] = useState<ExceptionFilters>(emptyFilters)
   const [cursors, setCursors] = useState<(string | null)[]>([null])
@@ -328,6 +329,15 @@ export function OperationsApp() {
     setPageIndex(0)
   }
 
+  function exitOperations() {
+    if (integrated) {
+      fetch('/api/auth/logout', { method: 'POST', credentials: 'same-origin' })
+        .finally(() => window.location.assign('/login'))
+      return
+    }
+    lock()
+  }
+
   useEffect(() => {
     if (!key) return
     const controller = new AbortController()
@@ -337,6 +347,7 @@ export function OperationsApp() {
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
         if (error instanceof ApiError && error.status === 401) {
+          if (window.location.pathname.startsWith('/ops')) { window.location.assign('/login'); return }
           lock('密钥无效或已失效，请重新输入。')
           return
         }
@@ -354,6 +365,7 @@ export function OperationsApp() {
       .catch((error: unknown) => {
         if (controller.signal.aborted) return
         if (error instanceof ApiError && error.status === 401) {
+          if (window.location.pathname.startsWith('/ops')) { window.location.assign('/login'); return }
           lock('密钥无效或已失效，请重新输入。')
           return
         }
@@ -379,11 +391,11 @@ export function OperationsApp() {
 
   return (
     <div className="app-shell">
-      <header className="topbar"><Brand /><span className="topbar-context">独立运维服务 <span className="context-dot" aria-hidden="true" /> 只读数据库</span></header>
+      <header className="topbar"><Brand /><span className="topbar-context">{integrated ? '同进程运维查询' : '独立运维服务'} <span className="context-dot" aria-hidden="true" /> 只读数据库</span></header>
       {!key ? <AccessGate key={accessError} error={accessError} onUnlock={(input) => { setAccessError(''); setKey(input) }} /> : <main className="console-layout">
         <div className="page-heading">
           <div><p className="eyebrow">SYSTEM OBSERVABILITY / EXCEPTIONS</p><h1>异常中心</h1><p>跨项目构建检查警示与终态异常。选择记录查看安全摘要与关联事件。</p></div>
-          <div className="heading-actions"><span className="read-only-badge"><span aria-hidden="true">◉</span>只读模式</span><button type="button" className="text-button" onClick={() => lock()}>退出运维</button></div>
+          <div className="heading-actions"><span className="read-only-badge"><span aria-hidden="true">◉</span>只读模式</span><button type="button" className="text-button" onClick={exitOperations}>退出运维</button></div>
         </div>
         <Filters initial={filters} onApply={applyFilters} />
         <div className={`content-grid${selectedId ? ' has-detail' : ''}`}>

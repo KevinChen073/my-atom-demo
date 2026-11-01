@@ -15,6 +15,8 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .runner import UnsafeSource
+from .atom_auth import install_atom_auth
+from .atom_ops import create_router as create_atom_ops_router
 from .messages import MessageService
 from .preview_access import PreviewAccess, preview_origin
 from .settings import Settings
@@ -71,7 +73,7 @@ def owner_hash(token: str) -> str:
 
 def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     settings = settings or Settings()
-    if settings.app_env not in {"local", "container_smoke"}:
+    if settings.app_env not in {"local", "container_smoke", "atom"}:
         raise RuntimeError("生产存储与隔离 Runner 尚未接入，拒绝启动公开 API")
     if settings.database_url:
         if settings.app_env != "local":
@@ -102,6 +104,13 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     app.state.store = store
     app.state.workflow = workflow
     app.state.messages = messages
+
+    if settings.app_env == "atom":
+        install_atom_auth(app, settings)
+        app.include_router(create_atom_ops_router(settings.app_db))
+        ops_dist = settings.root / "atom-static" / "ops-web"
+        if ops_dist.is_dir():
+            app.mount("/ops", StaticFiles(directory=ops_dist, html=True), name="atom-ops")
 
     if settings.app_env == "container_smoke":
         @app.middleware("http")
@@ -384,14 +393,19 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     def get_preview(version_id: str, request: Request):
         version = store.get_version(version_id)
         project_access(request, version["project_id"])
-        if settings.app_env != "local":
+        if settings.app_env == "atom" and not settings.atom_preview_domain:
+            raise HTTPException(status_code=503, detail="尚未配置并验证项目独立预览域；静态产物已保存，可查看源码")
+        if settings.app_env not in {"local", "atom"}:
             raise HTTPException(status_code=503, detail="当前环境尚无已验证的隔离预览服务")
         dist = workflow.runner.artifact(version["project_id"], version["run_id"]) / "dist" / "index.html"
         if not dist.is_file():
             raise HTTPException(status_code=404, detail="该版本尚无可预览的构建产物")
         ticket, expires = preview_access.issue_ticket(version_id, version["project_id"])
-        return {"url": f"{preview_origin(version['project_id'], settings.preview_port)}/open/{version_id}?ticket={ticket}", "expires_at": expires,
-                "scope": "local_preview_only"}
+        origin = (preview_origin(version["project_id"], None, settings.atom_preview_domain,
+                                 settings.atom_preview_scheme) if settings.app_env == "atom" else
+                  preview_origin(version["project_id"], settings.preview_port))
+        return {"url": f"{origin}/open/{version_id}?ticket={ticket}", "expires_at": expires,
+                "scope": "isolated_project_origin" if settings.app_env == "atom" else "local_preview_only"}
 
     @app.get("/api/versions/{version_id}/files/{name:path}")
     def get_file(version_id: str, name: str, request: Request):
@@ -403,7 +417,9 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="文件不存在")
         return PlainTextResponse(content)
 
-    dist = settings.root / "web" / "dist"
+    dist = settings.root / ("atom-static/web" if settings.app_env == "atom" else "web/dist")
+    if settings.app_env == "atom" and not (dist / "index.html").is_file():
+        raise RuntimeError("Atoms 静态工作台缺失；部署包需要 atom-static/web")
     if dist.exists():
         @app.get("/projects/{project_id}", include_in_schema=False)
         def project_page(project_id: str):
@@ -419,4 +435,4 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     return app
 
 
-app = create_app()
+app = create_app() if Settings().app_env != "atom" else None
