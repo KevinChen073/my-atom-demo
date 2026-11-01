@@ -5,6 +5,10 @@ on:
     branches: [deploy/azure-preparation]
   workflow_dispatch:
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   image-smoke:
     runs-on: ubuntu-latest
@@ -26,3 +30,13 @@ jobs:
           done
           python -c 'import json; assert json.load(open("/tmp/myatom-health.json"))["app_env"] == "container_smoke"'
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/)" = "503"
+      - name: Publish verified image to GitHub Container Registry
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          image=ghcr.io/kevinchen073/my-atom-demo
+          docker tag myatom-demo-smoke "$image:smoke-${GITHUB_SHA}"
+          docker tag myatom-demo-smoke "$image:smoke"
+          docker push "$image:smoke-${GITHUB_SHA}"
+          docker push "$image:smoke"
