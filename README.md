@@ -69,7 +69,8 @@ npm run build
 
 ## 当前能力与边界
 
-- 项目、运行、消息、解释结果、决策、事件、模型用量、版本和 LangGraph checkpoint 保存在本地 SQLite；生成源码和构建产物在 `data/`。同一访客凭证可刷新/重进恢复项目。澄清、计划和构建失败待处理卡在底部共用“发送”；服务端按当前阶段解释并校验动作。
+- 本地默认用 SQLite 保存项目、运行、决策、事件、版本和 LangGraph checkpoint；设置服务端 `MYATOM_DATABASE_URL` 后可在本地开发模式改用 PostgreSQL，先显式运行 `python -m backend.migrate_postgres` 升级到 v2。两种模式共用工作流代码，生成源码和构建产物仍在本地 `data/`；Azure 正式环境的 Blob、隔离 Runner 与预览尚未接通。数据库实施边界见 [Azure 持久化](docs/AZURE-PERSISTENCE.md)。同一访客凭证可刷新/重进恢复项目。
+- 已有可用版本时，新需求自动从当前版本继承完整计划与源码快照；计划卡列出沿用、增加、调整或删除的功能，确认后优先修改指定文件。失败不会替换旧版。具体规则见 [ADR-019](docs/decisions/ADR-019-version-inheritance.md)。
 - 生成代码限固定 React+TS+Vite 模板：`src/App.tsx`、`src/app.css`、`src/hooks/useAppState.ts` 与根目录 `readme.md` 必需；额外组件在 `src/components/`、额外逻辑在 `src/hooks/`，最多 12 个生成文件。只有编译/类型等源码错误才自动修复，最多 60 轮；同错连续无进展或累计第 5 次出现会提前停止。
 - SSE 事件按游标回放。预览用短期票据打开已构建的真实应用，每项目使用稳定的独立 `.localhost` origin；生成应用的业务数据只在该预览域 `localStorage`。候选产物经构建及静态资源检查后才成为可用快照。每项目最多保留 5 版，回滚只持久切换当前版本指针；浏览器业务数据不随代码回滚。
 - V7 桌面壳包含新建项目首页、工作台、概览、文档、测试、发布六个 URL 视图。项目内四个状态页可直达并刷新恢复；同项目切页保留对话，跨项目切换先清除旧项目内容。当前视觉规则见 `design/design.md`、`design/token.json` 和 `web/src/v7.css`。

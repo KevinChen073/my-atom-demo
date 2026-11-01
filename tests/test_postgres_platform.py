@@ -88,13 +88,54 @@ def test_postgres_restart_events_versions_preview_and_ops(pg_url: str):
     assert "request_text" not in str(records)
 
 
+def test_postgres_v1_to_v2_upgrade_preserves_version_and_pins_iteration(pg_url: str):
+    """Use a separate disposable database so an upgrade cannot affect other smoke cases."""
+    import uuid
+    import psycopg
+    from psycopg import sql as pgsql
+    from urllib.parse import urlsplit, urlunsplit
+
+    database = "myatom_upgrade_" + uuid.uuid4().hex[:12]
+    parts = urlsplit(pg_url)
+    upgrade_url = urlunsplit((parts.scheme, parts.netloc, "/" + database, parts.query, parts.fragment))
+    with psycopg.connect(pg_url, autocommit=True) as admin:
+        admin.execute(pgsql.SQL("CREATE DATABASE {}").format(pgsql.Identifier(database)))
+    try:
+        old_sql = (Path(__file__).parents[1] / "backend" / "sql" / "postgres_v1.sql").read_text(encoding="utf-8")
+        with psycopg.connect(upgrade_url) as old:
+            for statement in old_sql.split(";"):
+                if statement.strip():
+                    old.execute(statement)
+            old.execute("INSERT INTO projects (id,owner_hash,title,created_at,updated_at,active_version_id) VALUES (%s,%s,%s,%s,%s,%s)",
+                        ("project-old", "owner", "计数器", "2026-11-01T00:00:00", "2026-11-01T00:00:00", "version-old"))
+            old.execute("""INSERT INTO runs (id,project_id,idempotency_key,request_text,status,phase,trace_id,created_at,updated_at,plan_json)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        ("run-old", "project-old", "old", "做一个计数器应用", "completed", "Done", "trace-old",
+                         "2026-11-01T00:00:00", "2026-11-01T00:00:00", '{"title":"计数器","features":["点击加一"],"acceptance":["点击后增加"]}'))
+            old.execute("INSERT INTO versions (id,project_id,run_id,manifest_json,created_at) VALUES (%s,%s,%s,%s,%s)",
+                        ("version-old", "project-old", "run-old", '{"files":[]}', "2026-11-01T00:00:00"))
+        migrate(upgrade_url)
+        migrate(upgrade_url)
+        upgraded = PostgresStore(upgrade_url)
+        assert upgraded.get_project("project-old", "owner")["active_version_id"] == "version-old"
+        assert upgraded.get_run("run-old")["run_mode"] == "create"
+        run, created = upgraded.create_run("project-old", "把标题改成蓝色", "new")
+        assert created and run["base_version_id"] == "version-old"
+        assert run["base_spec"]["plan"]["features"] == ["点击加一"]
+        with psycopg.connect(upgrade_url) as check:
+            assert check.execute("SELECT max(version) FROM myatom_schema_version").fetchone()[0] == 2
+    finally:
+        with psycopg.connect(pg_url, autocommit=True) as admin:
+            admin.execute(pgsql.SQL("DROP DATABASE {} WITH (FORCE)").format(pgsql.Identifier(database)))
+
+
 def test_postgres_checkpoint_and_waiting_card_resume(pg_url: str, tmp_path: Path):
     settings = Settings(data_dir=tmp_path, app_env="local", database_url=pg_url, model_api_key="test-only")
     app = create_app(settings, model=FakeModel())
     with TestClient(app) as client:
         project_id = client.post("/api/projects", json={"title": "PG checkpoint smoke"}).json()["id"]
         run_id = client.post(f"/api/projects/{project_id}/runs", json={
-            "request_text": "Create a small task app with localStorage persistence and a refresh check"
+            "request_text": "Create a small task app with add and delete actions"
         }).json()["run"]["id"]
         waiting = wait_status(client, run_id, "awaiting_clarification")
         assert waiting["card_id"]

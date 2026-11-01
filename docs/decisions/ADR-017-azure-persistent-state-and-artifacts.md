@@ -13,6 +13,7 @@
 2. **Azure Blob Storage 私有容器**保存不可变交付快照：源码、模板/依赖锁、构建产物、manifest 与必要的诊断文件。隔离 Runner 的构建工作区和候选目录是临时文件；通过构建与静态预览检查后先上传完整候选、核对 hash，再提交 PostgreSQL 中的 `versions` 和 `active_version_id`。数据库事务失败时保留旧版；未引用的 Blob 由定期清理处理。数据库先删除版本元数据，产物清理进入持久队列，清理可重试。
 3. Blob key 由受校验的项目 ID、run ID、内容 digest 和相对路径构成；容器不公开。预览网关经版本权限检查后读取 Blob，不把存储凭证或原始 Blob URL交给生成应用。Blob 访问优先使用 Container Apps 托管身份与最小 RBAC；数据库连接及模型密钥由服务端密钥配置提供，不进代码仓库、浏览器、生成项目或日志。
 4. 本地模式继续使用 SQLite 与本地文件，生成应用的**业务数据**继续使用其独立预览 origin 的 `localStorage`。平台数据库和 Blob 只保存 MYATOM 平台状态及交付代码；不改变 [ADR-004](ADR-004-generated-deliverable-boundaries.md) 的业务数据边界。
+   Azure 作为独立新环境从空库和空 Blob 容器开始；按用户 2026-11-01 的决定，不迁入本地历史项目、运行、checkpoint、版本或产物。本地旧数据保持原状。
 5. 首个 Azure 测试域只允许一个主工作进程/副本，直到跨副本任务领取、续租与幂等恢复完成验收。生产适配未完成时继续拒绝 `APP_ENV=production`；不能把目前的 `container_smoke` 健康检查当作持久化通过。
 
 ## 取舍与失败处理

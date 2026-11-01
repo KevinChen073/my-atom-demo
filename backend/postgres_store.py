@@ -78,8 +78,8 @@ class PostgresStore(Store):
         self.database_url = database_url
         self.lock = threading.RLock()
         with self._conn() as db:
-            version = db.execute("SELECT version FROM myatom_schema_version").fetchone()
-            if version is None or version[0] != 1:
+            version = db.execute("SELECT max(version) FROM myatom_schema_version").fetchone()
+            if version is None or version[0] != 2:
                 raise RuntimeError("PostgreSQL schema 尚未迁移，请先执行 backend.migrate_postgres")
 
     def _conn(self):

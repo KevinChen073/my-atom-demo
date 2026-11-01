@@ -52,6 +52,7 @@ class Store:
                     request_text TEXT NOT NULL, status TEXT NOT NULL, phase TEXT NOT NULL,
                     card_json TEXT, card_id TEXT, spec_version INTEGER NOT NULL DEFAULT 0,
                     approved_spec_version INTEGER, answers_json TEXT, plan_json TEXT,
+                    run_mode TEXT NOT NULL DEFAULT 'create', base_version_id TEXT, base_spec_json TEXT,
                     model_calls INTEGER NOT NULL DEFAULT 0, tokens_used INTEGER NOT NULL DEFAULT 0,
                     max_model_calls INTEGER, max_total_tokens INTEGER,
                     max_run_seconds INTEGER, max_fix_rounds INTEGER,
@@ -131,6 +132,12 @@ class Store:
             if "active_version_id" not in columns:
                 db.execute("ALTER TABLE projects ADD COLUMN active_version_id TEXT")
             run_columns = {row[1] for row in db.execute("PRAGMA table_info(runs)")}
+            if "run_mode" not in run_columns:
+                db.execute("ALTER TABLE runs ADD COLUMN run_mode TEXT NOT NULL DEFAULT 'create'")
+            if "base_version_id" not in run_columns:
+                db.execute("ALTER TABLE runs ADD COLUMN base_version_id TEXT")
+            if "base_spec_json" not in run_columns:
+                db.execute("ALTER TABLE runs ADD COLUMN base_spec_json TEXT")
             if "active_seconds" not in run_columns:
                 db.execute("ALTER TABLE runs ADD COLUMN active_seconds REAL")
             if "execution_started_at" not in run_columns:
@@ -285,7 +292,7 @@ class Store:
         if row is None:
             return None
         result = dict(row)
-        for key in ("card_json", "answers_json", "plan_json", "manifest_json", "payload_json", "result_json", "interpreted_intents_json"):
+        for key in ("card_json", "answers_json", "plan_json", "base_spec_json", "manifest_json", "payload_json", "result_json", "interpreted_intents_json"):
             if key in result:
                 result[key.removesuffix("_json")] = json.loads(result.pop(key)) if result[key] else None
         return result
@@ -331,9 +338,11 @@ class Store:
             return project
 
     def create_run(self, project_id: str, request_text: str, idempotency_key: str,
-                   limits: dict[str, int] | None = None) -> tuple[dict[str, Any], bool]:
+                   limits: dict[str, int] | None = None, mode: str = "auto") -> tuple[dict[str, Any], bool]:
         run_id, timestamp = str(uuid.uuid4()), now()
         limits = limits or DEFAULT_LIMITS
+        if mode not in {"auto", "create", "iterate"}:
+            raise ValueError("无效的运行模式")
         with self.lock, self._conn() as db:
             self._lock_project(db, project_id)
             existing = db.execute("SELECT * FROM runs WHERE project_id=? AND idempotency_key=?", (project_id, idempotency_key)).fetchone()
@@ -342,11 +351,34 @@ class Store:
             active = db.execute("SELECT id FROM runs WHERE project_id=? AND status IN ('clarifying','planning','building','awaiting_clarification','awaiting_plan','awaiting_repair','awaiting_budget')", (project_id,)).fetchone()
             if active:
                 raise Conflict("此项目已有进行中的任务")
+            project = db.execute("SELECT active_version_id FROM projects WHERE id=?", (project_id,)).fetchone()
+            if not project:
+                raise NotFound("项目不存在")
+            base_version_id = project["active_version_id"]
+            if mode == "auto":
+                mode = "iterate" if base_version_id else "create"
+            if mode == "iterate" and not base_version_id:
+                raise Conflict("此项目尚无可迭代版本")
+            if mode == "create" and base_version_id:
+                raise Conflict("已有可用版本的项目须从当前版本继续迭代")
+            base_spec = None
+            if base_version_id:
+                version = db.execute("SELECT manifest_json, run_id FROM versions WHERE id=? AND project_id=?", (base_version_id, project_id)).fetchone()
+                if not version:
+                    raise Conflict("当前版本不可读取")
+                manifest = json.loads(version["manifest_json"])
+                base_spec = manifest.get("effective_spec")
+                if not isinstance(base_spec, dict):
+                    previous = db.execute("SELECT request_text, plan_json FROM runs WHERE id=?", (version["run_id"],)).fetchone()
+                    base_spec = {"request_text": previous["request_text"], "plan": json.loads(previous["plan_json"] or "{}") } if previous else None
+                if not base_spec or not base_spec.get("plan"):
+                    raise Conflict("当前版本缺少可继承的已确认计划")
             db.execute("""INSERT INTO runs (id, project_id, idempotency_key, request_text, status, phase,
                 trace_id, created_at, updated_at, active_seconds, max_model_calls, max_total_tokens,
-                max_run_seconds, max_fix_rounds) VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?)""",
+                max_run_seconds, max_fix_rounds, run_mode, base_version_id, base_spec_json) VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?,?)""",
                        (run_id, project_id, idempotency_key, request_text, "clarifying", "Clarify", str(uuid.uuid4()),
-                        timestamp, timestamp, *(int(limits[kind]) for kind in LIMIT_COLUMNS)))
+                        timestamp, timestamp, *(int(limits[kind]) for kind in LIMIT_COLUMNS), mode,
+                        base_version_id, dumps(base_spec) if base_spec else None))
             db.execute("UPDATE projects SET updated_at=? WHERE id=?", (timestamp, project_id))
             self._append_event(db, run_id, "run_created", {"phase": "Clarify", "request_text": request_text})
         return self.get_run(run_id), True
@@ -674,6 +706,10 @@ class Store:
             existing = db.execute("SELECT * FROM versions WHERE run_id=?", (run_id,)).fetchone()
             if existing:
                 return self._dict(existing), removed_runs
+            run = db.execute("SELECT base_version_id FROM runs WHERE id=? AND project_id=?", (run_id, project_id)).fetchone()
+            current = db.execute("SELECT active_version_id FROM projects WHERE id=?", (project_id,)).fetchone()
+            if not run or not current or run["base_version_id"] != current["active_version_id"]:
+                raise Conflict("当前版本已变化，请以最新版本开始新一轮")
             version_id = str(uuid.uuid4())
             db.execute("INSERT INTO versions (id, project_id, run_id, manifest_json, created_at) VALUES (?,?,?,?,?)",
                        (version_id, project_id, run_id, dumps(manifest), now()))

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import logging
 import math
 import os
@@ -171,18 +172,26 @@ def source_failure_summary(events: list[dict[str, Any]], stop_reason: str, fix_r
 
 
 def normalize_plan(raw: dict[str, Any]) -> dict[str, Any]:
+    def plan_items(name: str, limit: int) -> list[str]:
+        source = raw.get(name)
+        if isinstance(source, list) and len(source) > limit:
+            raise ValueError(f"计划中的 {name} 超过 {limit} 项，不能静默截断已确认要求")
+        return text_items(source, limit)
+    page_source = raw.get("pages", [])
+    if isinstance(page_source, list) and len(page_source) > 6:
+        raise ValueError("计划页面超过 6 个，不能静默截断")
     pages = []
-    for item in raw.get("pages", [])[:6] if isinstance(raw.get("pages"), list) else []:
+    for item in page_source if isinstance(page_source, list) else []:
         if isinstance(item, dict):
             pages.append({"name": str(item.get("name", "")).strip()[:100], "purpose": str(item.get("purpose", "")).strip()[:300]})
     plan = {
         "title": str(raw.get("title", "未命名应用")).strip()[:100],
         "pages": pages,
-        "features": text_items(raw.get("features")),
-        "data_model": text_items(raw.get("data_model")),
-        "acceptance": text_items(raw.get("acceptance"), 12),
-        "tasks": text_items(raw.get("tasks")),
-        "limitations": text_items(raw.get("limitations")),
+        "features": plan_items("features", 32),
+        "data_model": plan_items("data_model", 32),
+        "acceptance": plan_items("acceptance", 48),
+        "tasks": plan_items("tasks", 32),
+        "limitations": plan_items("limitations", 32),
         "entities": [],
         "template": "React + TypeScript + Vite",
     }
@@ -198,6 +207,47 @@ def normalize_plan(raw: dict[str, Any]) -> dict[str, Any]:
                 if not negation.search(clause[:match.start()].rstrip()):
                     raise ValueError("生成应用只能在独立预览 origin 使用 localStorage 保存业务数据")
     return plan
+
+
+def merge_iteration_plan(raw: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
+    """Keep the approved baseline unless the plan card explicitly names a change."""
+    previous = normalize_plan(base["plan"])
+    delta = normalize_plan({**raw, "features": raw.get("features") or previous["features"],
+                            "acceptance": raw.get("acceptance") or previous["acceptance"]})
+    if isinstance(raw.get("removed_features"), list) and len(raw["removed_features"]) > 32:
+        raise ValueError("删除功能列表超过当前计划容量")
+    removed = text_items(raw.get("removed_features"), 32)
+    modified = raw.get("modified_features") or {}
+    if not isinstance(modified, dict) or any(not isinstance(key, str) or not isinstance(value, str) or not value.strip()
+                                               for key, value in modified.items()):
+        raise ValueError("功能修改列表格式无效")
+    if any(item not in previous["features"] for item in removed + list(modified)) or set(removed) & set(modified):
+        raise ValueError("待删除或修改的功能必须准确引用上一版功能")
+    retained = [item for item in previous["features"] if item not in removed and item not in modified]
+    changed = [modified[item].strip()[:300] for item in previous["features"] if item in modified]
+    added = [item for item in delta["features"] if item not in previous["features"] and item not in changed]
+    def unique(items: list[str]) -> list[str]:
+        return list(dict.fromkeys(items))
+    delta["features"] = unique(retained + changed + added)
+    for key in ("data_model", "acceptance", "tasks", "limitations"):
+        delta[key] = unique(previous[key] + delta[key])
+    if len(delta["features"]) > 32 or len(delta["acceptance"]) > 48 or any(len(delta[key]) > 32 for key in ("data_model", "tasks", "limitations")):
+        raise ValueError("累计需求超过当前单应用计划容量，请缩减本轮范围")
+    delta["pages"] = previous["pages"] + [page for page in delta["pages"] if page not in previous["pages"]]
+    if len(delta["pages"]) > 6:
+        raise ValueError("累计页面超过 6 个，请缩减本轮范围")
+    changed_files = raw.get("changed_files") or []
+    new_files = raw.get("new_files") or []
+    if not isinstance(changed_files, list) or not isinstance(new_files, list):
+        raise ValueError("修改文件列表格式无效")
+    paths = changed_files + new_files
+    if any(not isinstance(path, str) or not GENERATED_FILE.fullmatch(path) for path in paths):
+        raise ValueError("修改文件超出固定模板")
+    delta["change_set"] = {"retained": retained, "modified": [{"before": key, "after": modified[key]} for key in modified],
+                           "removed": removed, "added": added}
+    delta["changed_files"] = sorted(set(changed_files))
+    delta["new_files"] = sorted(set(new_files))
+    return delta
 
 
 class Workflow:
@@ -268,6 +318,7 @@ class Workflow:
                 run_id, "clarify", f"card{count + 1}-rev{state.get('clarify_revision', 0)}-c{correction}",
                 "你是 Web 产品需求分析师。输出 JSON：summary 字符串、assumptions 字符串数组、questions 数组，每轮必须 1–3 项，每项 text/default/required。只问影响实现且未回答的关键问题，不重复原需求长摘要。固定 React+TypeScript+Vite；业务数据只在项目独立预览 origin 的 localStorage 中保存，不提供服务端业务 CRUD。",
                 f"原始需求：{state['request_text']}\n过往问答：{dumps(history)}\n尚缺信息：{dumps(state.get('open_gaps', []))}"
+                + (f"\n上一可用版本的已确认功能：{dumps(self.store.get_run(run_id).get('base_spec', {}).get('plan', {}).get('features', []))}。只澄清本轮变化。" if self.store.get_run(run_id).get('base_version_id') else "")
                 + (f"\n上次问题校验失败：{last_error}" if last_error else "") + "\n请给出本轮澄清 JSON。",
                 max_tokens=1400,
             )
@@ -315,7 +366,7 @@ class Workflow:
         raw = self.model.generate(
             state["run_id"], "clarity_gate", f"card{state['clarification_card_count']}-rev{state.get('clarify_revision', 0)}",
             "判断已确认的需求是否足够生成固定 React+TypeScript+Vite 应用。只输出 JSON：complete 布尔值、missing 字符串数组。不要因非关键细节继续追问；如缺少影响实现的约束，complete=false。业务存储只允许预览 origin 的 localStorage。",
-            f"需求：{state['request_text']}\n已确认问答：{dumps(state.get('clarification_history', []))}\n请判断是否完整。",
+            f"需求：{state['request_text']}\n上一可用版本：{dumps(self.store.get_run(state['run_id']).get('base_spec'))}\n已确认问答：{dumps(state.get('clarification_history', []))}\n请判断是否完整。",
             max_tokens=600,
         )
         if not isinstance(raw.get("complete"), bool):
@@ -343,6 +394,8 @@ class Workflow:
 
     def plan(self, state: RunState) -> dict[str, Any]:
         run_id = state["run_id"]
+        run = self.store.get_run(run_id)
+        base_spec = run.get("base_spec") if run.get("base_version_id") else None
         revision = state.get("plan_revision", 0)
         self.store.update_run(run_id, status="planning", phase="Plan", event_type="phase", event_payload={"phase": "Plan", "revision": revision})
         request_clauses = re.split(r"[，,。；;\n]", state["request_text"])
@@ -361,8 +414,14 @@ class Workflow:
                   "若需求要刷新后保留业务数据，data_model 必须逐项写明由 localStorage 保存的字段，acceptance 必须包含刷新读回；不能把数据模型留空或只写页面状态。"
                   "limitations 不得与前述存储方案冲突；浏览器清除存储或更换浏览器后数据无法恢复，业务数据不随代码版本回滚。"
                   "源码采用 src/App.tsx 入口、src/app.css 样式入口，状态与业务逻辑在 src/hooks/，多组件在 src/components/；根目录 readme.md 描述项目。计划须具体可测试。")
-        prompt = (f"原始需求：{state['request_text']}\n已确认问答：{dumps(state.get('clarification_history', []))}"
-                  f"\n计划修改意见：{state.get('plan_feedback', '')}"
+        if base_spec:
+            system += ("这是对已保存版本的迭代。features 只列本轮新增功能；不要复写原功能。"
+                       "如用户明确要求删除或替换旧功能，使用 removed_features 字符串数组、modified_features 对象（旧功能原文到新功能）；"
+                       "旧功能原文须逐字匹配。返回 changed_files（需重写的已有生成文件）和 new_files（新增生成文件），路径限固定模板。"
+                       "没有明确删除或替换请求时，这两项为空；原数据模型和验收点会自动保留。")
+        prompt = (f"本轮需求：{state['request_text']}\n已确认问答：{dumps(state.get('clarification_history', []))}"
+                  + (f"\n上一可用版本的完整已确认规格：{dumps(base_spec)}" if base_spec else ""))
+        prompt += (f"\n计划修改意见：{state.get('plan_feedback', '')}"
                   "\n请输出完整 Build Plan JSON。")
         last_error: ValueError | None = None
         for correction in range(2):
@@ -370,7 +429,7 @@ class Workflow:
                                       prompt + (f"\n前版计划校验失败：{last_error}" if last_error else ""), max_tokens=4000)
             self._check_cancel(run_id)
             try:
-                plan = normalize_plan(raw)
+                plan = merge_iteration_plan(raw, base_spec) if base_spec else normalize_plan(raw)
                 answered_text = "；".join(str(item.get("answer", "")) for item in state.get("clarification_history", []) if isinstance(item, dict))
                 persistence_pattern = re.compile(r"localStorage|持久|保存到|刷新.{0,12}(?:保留|读回|恢复|仍|存在)", re.IGNORECASE)
                 persistence_requested = any(
@@ -414,6 +473,31 @@ class Workflow:
             raise RuntimeError("计划尚未确认，禁止写入生成文件")
         self.store.update_run(state["run_id"], status="building", phase="Prepare", event_type="phase", event_payload={"phase": "Prepare"})
         self.runner.prepare(state["project_id"], state["run_id"])
+        if run.get("base_version_id"):
+            base = self.store.get_version(run["base_version_id"])
+            files: dict[str, str] = {}
+            for entry in base["manifest"].get("files", []):
+                if not isinstance(entry, dict):
+                    continue
+                path = entry.get("path", "")
+                if not GENERATED_FILE.fullmatch(path):
+                    continue
+                content = self.runner.read_artifact_file(state["project_id"], base["run_id"], path)
+                if hashlib.sha256(content.encode("utf-8")).hexdigest() != entry.get("sha256"):
+                    raise RuntimeError("上一版本源码校验失败，已停止迭代")
+                files[path] = content
+            if self.runner.inspect_generated(files):
+                raise RuntimeError("上一版本源码不符合当前生成边界，已停止迭代")
+            changed = state["plan"].get("changed_files") or []
+            new = state["plan"].get("new_files") or []
+            if any(path not in files for path in changed) or any(path in files for path in new):
+                raise RuntimeError("计划中的修改文件与上一版本源码不匹配")
+            targets = sorted(set(changed + new)) if changed or new else sorted(files)
+            ref = f"base-{run['base_version_id']}"
+            self.store.cache_set(state["run_id"], "source_candidate", ref, {"files": files})
+            self.store.update_run(state["run_id"], event_type="base_version_loaded", event_payload={
+                "base_version_id": run["base_version_id"], "target_files": targets})
+            return {"source_candidate_ref": ref, "code_feedback": {"target_files": targets}}
         return {}
 
     def code_loop(self, state: RunState) -> dict[str, Any]:
@@ -432,10 +516,13 @@ class Workflow:
         targets = sorted(set(targets))
         base_system = source_contract_prompt(targets)
         prompt = f"批准计划：{dumps(state['plan'])}\n原始需求：{state['request_text']}\n已确认问答：{dumps(state.get('clarification_history', []))}"
+        if self.store.get_run(run_id).get("base_version_id"):
+            prompt += "\n这是已保存版本的迭代，必须保留批准计划中的沿用功能、数据格式与旧验收点；只按本轮变化调整目标文件。"
         if feedback:
             prompt += f"\n上次检查的问题与修复反馈：{dumps(feedback.get('issues', []))}"
         if targets:
             prompt += f"\n仅重新生成这些文件的完整内容：{dumps(targets)}。其余候选文件保持原样；请遵守现有文件的导入路径。"
+            prompt += f"\n待修改文件的上一版完整内容（新文件为空）：{dumps({path: base['files'].get(path, '') for path in targets})}"
             references = repair_interface_context(base["files"], targets)
             if references:
                 prompt += ("\n以下是当前候选中保持不变的导入依赖，只供核对导出、props 和 hook 返回值；"
@@ -608,6 +695,11 @@ class Workflow:
         candidate = state["candidate"]
         self.runner.commit_candidate(state["project_id"], run_id, candidate["digest"])
         manifest = {**candidate["manifest"], "preview": {"status": "checked", **state["preview_result"]}}
+        run = self.store.get_run(run_id)
+        inherited = (run.get("base_spec") or {}).get("requests") or ([run["base_spec"]["request_text"]] if run.get("base_spec") else [])
+        manifest["effective_spec"] = {"request_text": run["request_text"], "requests": (inherited + [run["request_text"]])[-5:],
+                                      "plan": state["plan"]}
+        manifest["base_version_id"] = run.get("base_version_id")
         self._check_cancel(run_id)
         version, _ = self.store.commit_version(state["project_id"], run_id, manifest)
         self.store.update_run(run_id, status="completed", phase="Done", version_id=version["id"], card_json=dumps({

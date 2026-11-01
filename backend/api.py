@@ -7,7 +7,7 @@ import logging
 import secrets
 import uuid
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse, StreamingResponse
@@ -32,6 +32,7 @@ class ProjectInput(BaseModel):
 
 class RunInput(BaseModel):
     request_text: str = Field(min_length=10, max_length=5000)
+    mode: Literal["auto", "create", "iterate"] = "auto"
 
 
 class DecisionInput(BaseModel):
@@ -178,7 +179,7 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
             raise HTTPException(status_code=422, detail="请至少用 10 个字描述应用需求")
         run, created = store.create_run(project_id, body.request_text.strip(), idempotency_key or str(uuid.uuid4()),
             limits={"model_calls": settings.max_model_calls, "total_tokens": settings.max_total_tokens,
-                    "run_seconds": settings.max_run_seconds, "fix_rounds": settings.max_fix_rounds})
+                    "run_seconds": settings.max_run_seconds, "fix_rounds": settings.max_fix_rounds}, mode=body.mode)
         if created:
             workflow.enqueue(run["id"])
         return {"run": run, "created": created}

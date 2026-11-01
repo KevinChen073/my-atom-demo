@@ -105,6 +105,13 @@ input::placeholder, textarea::placeholder { color: #a0a7a0; }
 .decision-card h3, .result-card h3, .new-run-card h3 { font-size: 21px; letter-spacing: -.03em; margin: 14px 0; }
 .card-summary { color: #59675f; line-height: 1.8; font-size: 13px; }
 .card-subtitle { color: var(--text); font-size: 11px; font-weight: 800; letter-spacing: .04em; border-bottom: 1px solid #e8e9e3; padding-bottom: 9px; margin: 23px 0 12px; }
+.iteration-changes { border: 1px solid var(--line, #d9e1db); border-radius: 10px; padding: 0 14px 12px; background: var(--surface, #fff); }
+.iteration-changes p { line-height: 1.6; margin: 8px 0; }
+.iteration-changes details { margin-top: 10px; }
+.iteration-changes summary { cursor: pointer; }
+.iteration-summary { display: grid; gap: 5px; padding: 12px 14px; margin-top: 12px; border: 1px solid var(--line, #d9e1db); border-radius: 9px; }
+.iteration-summary span { color: var(--muted, #68736c); font-size: 12px; }
+.iteration-summary p { margin: 4px 0 0; color: #a13d20; line-height: 1.5; }
 .plain-list, .check-list { padding: 0; margin: 0; list-style: none; display: grid; gap: 9px; }
 .plain-list li { color: #58645e; font-size: 12px; line-height: 1.6; padding-left: 15px; position: relative; }
 .plain-list li::before { content: '•'; position: absolute; left: 1px; color: var(--accent); }
