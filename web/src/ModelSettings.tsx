@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { currentModelConfig, DEFAULT_MODEL, setActiveModelConfig } from './modelConfigStore'
+import { currentModelConfig, DEFAULT_MODEL, isLocalWorkbench, setActiveModelConfig } from './modelConfigStore'
 import type { ModelConfig } from './modelConfigStore'
 import './model-settings.css'
 
@@ -73,7 +73,7 @@ export function ModelSettings({ onChange }: { onChange: (config: ModelConfig | n
     {open && <div className="model-overlay" onMouseDown={event => { if (event.target === event.currentTarget) setOpen(false) }}>
       <div className="model-dialog" role="dialog" aria-modal="true" aria-labelledby="model-dialog-title">
         <div className="model-dialog-head"><h2 id="model-dialog-title">模型设置</h2><button type="button" onClick={() => setOpen(false)} aria-label="关闭模型设置">×</button></div>
-        <p>使用自己的 API Key 调用模型。Key 只保存在当前浏览器的 localStorage；运行时发送给后端，不写入项目或日志。共用电脑请在结束后清除 Key。</p>
+        <p>{isLocalWorkbench ? '使用自己的 API Key 调用模型。Key 可保存在当前浏览器，运行时发送给后端。共用电脑请在结束后清除 Key。' : '使用自己的 API Key 调用模型。Azure 演示中 Key 只在当前页面会话内使用，刷新后需重新填写；请勿在生成应用中输入敏感数据。'}</p>
         <label>服务类型</label><div className="model-provider-tabs">
           <button type="button" className={config.provider === 'deepseek' ? 'active' : ''} onClick={() => update({ provider: 'deepseek', base_url: 'https://api.deepseek.com', model_name: 'deepseek-chat' })}>DeepSeek</button>
           <button type="button" className={config.provider === 'openai_compatible' ? 'active' : ''} onClick={() => update({ provider: 'openai_compatible', base_url: 'https://api.openai.com/v1', model_name: 'gpt-4.1-mini' })}>OpenAI 兼容</button>
@@ -84,7 +84,7 @@ export function ModelSettings({ onChange }: { onChange: (config: ModelConfig | n
         <label htmlFor="model-name">模型名称</label><input id="model-name" value={config.model_name} onChange={event => update({ model_name: event.target.value })} />
         {config.provider === 'deepseek' && <div className="model-quick-options"><button type="button" onClick={() => update({ model_name: 'deepseek-chat' })}>deepseek-chat</button><button type="button" onClick={() => update({ model_name: 'deepseek-reasoner' })}>deepseek-reasoner</button></div>}
         {(error || testResult) && <p role="status" className={error ? 'model-error' : 'model-success'}>{error || testResult}</p>}
-        <div className="model-dialog-actions"><button type="button" onClick={clearKey}>清除 Key</button><span /><button type="button" onClick={test} disabled={testing}>{testing ? '测试中…' : '测试连接'}</button><button type="button" className="model-save" onClick={save}>保存</button></div>
+        <div className="model-dialog-actions"><button type="button" onClick={clearKey}>清除 Key</button><span /><button type="button" onClick={test} disabled={testing}>{testing ? '测试中…' : '测试连接'}</button><button type="button" className="model-save" onClick={save}>{isLocalWorkbench ? '保存' : '本次使用'}</button></div>
       </div>
     </div>}
   </>

@@ -1,6 +1,6 @@
 # MYATOM 系统架构（v0.1）
 
-状态：设计基线，2026-10-30；2026-10-31 按用户确认的 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 修订生成交付物边界；2026-11-01 按 [ADR-006](decisions/ADR-006-single-main-run-scope.md) 收束为单次主线交付，并按 [ADR-010](decisions/ADR-010-structured-card-single-send.md) 增加当前等待卡的消息解释层。GitHub → Azure 路线按 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md) 选定，受信演示边界见 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)，Azure SQL 数据库决定见 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md)，版本文本存储见 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md)；本地 SQLite 版本存储与用户模型 Key 见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)、[ADR-025](decisions/ADR-025-browser-model-settings.md)。产品范围见 [PRD](PRD.md)，冲突处理见 [ADR-002](decisions/ADR-002-change-control.md)。
+状态：设计基线，2026-10-30；2026-10-31 按用户确认的 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 修订生成交付物边界；2026-11-01 按 [ADR-006](decisions/ADR-006-single-main-run-scope.md) 收束为单次主线交付，并按 [ADR-010](decisions/ADR-010-structured-card-single-send.md) 增加当前等待卡的消息解释层。GitHub → Azure 路线按 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md) 选定，受信演示边界见 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)，Azure SQL 数据库决定见 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md)，版本文本存储见 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md)；本地 SQLite 版本存储与用户模型 Key 见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)、[ADR-025](decisions/ADR-025-browser-model-settings.md)。2026-11-01 用户以 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) 将每项目独立预览 origin 改为共享 origin 与项目 ID 键前缀；本地代码已迁移，Azure 在线验收待执行。产品范围见 [PRD](PRD.md)，冲突处理见 [ADR-002](decisions/ADR-002-change-control.md)。
 
 ## 1. 原则与系统边界
 
@@ -17,14 +17,14 @@ flowchart LR
   G --> C[Checkpoint 存储]
   H --> W[工作区与产物存储]
   H --> R[Runner / Preview 适配器]
-  R --> I[隔离预览 origin]
+  R --> I[工作台同 origin 的预览路径]
   U -->|仅受控预览| I
   H --> M[模型服务适配器]
 ```
 
-本地使用 Python API 服务和受控 worker，SQLite 保存平台记录、checkpoint、预览票据及完整版本文件，见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)。Azure 按 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 与 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 采用**受信演示**：主 API 容器内构建，容器自身 `/app/data` 只作临时工作区；平台记录、LangGraph checkpoint 与已提交版本的文本文件统一使用 Azure SQL；独立异常后台仍单独部署。尚未发布新镜像或通过 Azure 跨重启验收。它不提供代码执行隔离，只允许获授权用户访问；匿名公网生产模式仍拒绝启动。实施与未验证边界见 [Azure 持久化](AZURE-PERSISTENCE.md)。浏览器不直接调用模型服务或读取服务器文件；本地模型设置接口可在严格 loopback 条件下返回 `.env` Key，见 [ADR-025](decisions/ADR-025-browser-model-settings.md)。
+本地使用 Python API 服务和受控 worker，SQLite 保存平台记录、checkpoint、预览票据及完整版本文件，见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)。Azure 按 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 与 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 采用**受信演示**：主 API 容器内构建，容器自身 `/app/data` 只作临时工作区；平台记录、LangGraph checkpoint 与已提交版本的文本文件统一使用 Azure SQL；独立异常后台仍单独部署。旧镜像已在 Azure `container_smoke` 健康模式启动，容器到 Azure SQL 的只读 schema v2 探针已通过；完整 Azure 跨重启验收未通过。它不提供代码执行隔离，只允许获授权用户访问；匿名公网生产模式仍拒绝启动。实施与未验证边界见 [Azure 持久化](AZURE-PERSISTENCE.md)。浏览器不直接调用模型服务或读取服务器文件；本地模型设置接口可在严格 loopback 条件下返回 `.env` Key，Azure 页面仅在当前会话内存保留用户 Key，见 [ADR-025](decisions/ADR-025-browser-model-settings.md)。
 
-下文的 `ProjectRepository`、checkpointer、事件表与异常库属于 **MYATOM 平台**，可以使用服务端数据库；生成交付物自己的业务数据限其预览 origin 下的 `localStorage`。同一项目跨版本保持稳定 origin，不同项目须使用隔离 origin；项目 ID 作为存储键前缀不能阻止同源代码读取其他项目的数据。生成交付物若包含后端，只能有一个进程、一个监听端口，且不得用服务端数据库/缓存保存业务数据；MYATOM 的主 API、预览网关、独立异常后台不计入该限额。
+下文的 `ProjectRepository`、checkpointer、事件表与异常库属于 **MYATOM 平台**，可以使用服务端数据库；生成交付物自己的业务数据限工作台共享 origin 下的浏览器 `localStorage`，键名前缀为 `myatom.app.<项目 UUID>.`。同一项目跨版本复用前缀；不同项目在正常读写路径中避免键名冲突，但同源代码可读写其他项目键和工作台保存的模型 Key，前缀不构成安全边界。见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md)。生成交付物若包含后端，只能有一个进程、一个监听端口，且不得用服务端数据库/缓存保存业务数据；MYATOM 的主 API、预览网关、独立异常后台不计入该限额。
 
 跨项目异常后台是[独立部署单元](EXCEPTION-OBSERVABILITY.md)：主服务只向统一数据库写入安全异常字段；运维前后端单独运行，以只读连接查询该数据库，不通过主 API 获取跨项目数据。独立部署和数据库边界记录于 [ADR-003](decisions/ADR-003-exception-console.md)。
 
@@ -36,10 +36,10 @@ flowchart LR
 | `CheckpointRepository` | 按 `thread_id` 恢复 LangGraph 状态与 pending writes | SQLite checkpointer | Azure SQL saver；并发与重启恢复待实测 |
 | `EventLog` | 原子追加 `seq`、按 `after_seq` 回放 | SQLite | Azure SQL；锁定 run 行分配序号，故障恢复待实测 |
 | `ArtifactStore` | 按项目/运行/版本保存受控源码、文本构建资源与 manifest | SQLite `version_files` | Azure SQL `version_files` 为权威存储；容器 `/app/data` 为构建缓存。真实 Azure 数据库事务待验 |
-| `GeneratedAppStorage` | 在生成模板内封装带项目/应用命名空间的浏览器 `localStorage` 读写与格式校验；只存生成应用业务数据 | 预览 origin 的浏览器存储 | 同 origin 的 Web 存储；不使用平台 DB/SQL/缓存保存交付物业务数据 |
+| `GeneratedAppStorage` | 在生成模板 `src/hooks/` 内封装 `myatom.app.<项目 UUID>.` 前缀、读写与键名校验；只存生成应用业务数据 | 本地已实现共享 origin 的浏览器存储，Azure 待验收 | 同 origin 的 Web 存储；不使用平台 DB/SQL/缓存保存交付物业务数据；前缀不是权限边界 |
 | `ModelGateway` | 统一消息、结构化输出、token 用量、超时、取消 | 用户 Key 或本地 `.env` 默认值 | 用户在浏览器配置 Key；服务端当前 run 内存使用，进程重启后重新提供；兼容性待测 |
 | `Runner` | 创建工作区、构建/测试、限额、停止、清理 | 本地同宿主可信开发 | Azure 受信演示在主容器内构建；隔离证据未通过前不开放公网生成 |
-| `PreviewGateway` | 发布版本、返回受限 URL、停止/过期 | `.localhost` 项目独立 origin | HTTPS 项目稳定独立 origin 与生产会话机制；待实测 |
+| `PreviewGateway` | 发布版本、返回受限 URL、停止/过期 | 本地已实现工作台同 origin 的 `/preview/...`；Azure 待验收 | Azure 默认 HTTPS FQDN 上的共享路径预览；服务端归属与短期会话仍需实测 |
 | `SecretProvider` | 服务端按环境取凭证 | 本地环境配置 | Azure 托管密钥；禁止注入生成项目 |
 
 适配器不向上层暴露供应商数据库字段或模型专属消息格式。MYATOM 项目/会话/运行/版本与生成应用业务数据分属服务端和浏览器两个边界。Azure 环境从专用空库与空容器目录开始，**不导入本机历史项目、记录、checkpoint 或产物**；本地环境继续独立保存原数据。浏览器业务数据不随部署路径或代码快照自动搬迁。版本入库时文件行、manifest、当前指针与五版淘汰必须处于同一数据库事务（本地 SQLite，线上 Azure SQL）；预览、源码查看和迭代基线均从数据库读，不以构建目录存在为前提。
@@ -60,7 +60,7 @@ flowchart LR
 
 提交事务先校验当前版本仍为本 run 固定的基线，再写全部文件行和版本记录、切换当前指针、淘汰第 6 版的旧文件行；任何步骤失败整体回滚。预览仅按获授权 `version_id/path` 查询文本并设置正确 MIME、CSP 与无缓存头；SQL 不可用时返回明确错误，不能用旧容器缓存冒充可用版本。v1 已有文件仅在本地磁盘的旧版本必须检测并导入或标记不可用，不能只升级表结构后宣称可回滚。该事务与读取路径在当前代码中尚未接线。
 
-生成应用的持久化采用固定模板的 `GeneratedAppStorage` 适配：计划卡确定所需数据结构，Agent 写 React 页面与受控的本地读写逻辑，按命名空间/版本格式校验浏览器数据。预览网关须为每项目提供跨版本稳定、彼此隔离的 origin，才可同时验收刷新读回与跨项目隔离；预览不能调用主 Agent 管理 API，也不能持有数据库凭证或密钥。浏览器存储容量、清理存储、跨设备和旧版数据格式不兼容都需在产品中说明。生成应用后端为可选能力，最多一个进程/一个端口，只做不持久化业务数据的逻辑；超出范围的需求在计划卡中说明并要求缩减。
+生成应用的持久化采用固定模板的 `GeneratedAppStorage` 适配：计划卡确定所需数据结构，Agent 写 React 页面与受控的本地读写逻辑，按项目 UUID 前缀与键名格式校验浏览器数据，不允许无前缀键或 `localStorage.clear()`。预览网关已实现工作台同 origin 的共享路径；它只能保证服务端版本文件访问校验，不能阻止同源生成代码访问工作台脚本、API 与其他项目存储。用户已按 [ADR-025](decisions/ADR-025-browser-model-settings.md) 选择 Azure 仅当前页面会话内存保留 Key，本地 loopback 可保存在 `localStorage`；同源运行时仍不能称为凭证安全隔离。浏览器存储容量、清理存储、跨设备和旧版数据格式不兼容都需在产品中说明。生成应用后端为可选能力，最多一个进程/一个端口，只做不持久化业务数据的逻辑；超出范围的需求在计划卡中说明并要求缩减。
 
 ## 3. API、会话与事件
 
@@ -71,7 +71,7 @@ flowchart LR
 - `GET /api/projects/{id}/versions`、`GET /api/versions/{id}/preview` 查询产物与预览；`POST /api/runs/{id}/cancel` 请求取消。
 - 项目快照返回持久的 `active_version_id`；回滚命令携带目标 `version_id` 和幂等键，经项目权限与快照可用性校验后原子更新当前指向，不复制产物、不调用 Agent。具体路由由实现契约确定。
 
-生成应用的旧 `/data/{version_id}/{entity}` 服务端 CRUD 已移除。预览网关为每个项目使用独立 origin：本地是 `p-<project_uuid>.localhost:8001`，Azure 受信演示是 `p-<project_uuid>.<PREVIEW_BASE_DOMAIN>` 的 HTTPS 域；同一项目的版本复用 origin。预览票据和会话由平台数据库管理，不承载生成应用业务数据。跨站 iframe 不能依赖 `SameSite=Strict` Cookie 授权：一次性、2 分钟票据兑换为 60 分钟会话后，网关将随机会话值放在版本限定的预览路径中，静态资源经同一路径校验。响应禁缓存和 Referer，服务禁访问日志；工作台“重新载入”重新签发票据。该方案仅用于受信演示，Azure 域名解析、TLS、票据泄露边界和浏览器存储隔离仍须在实际环境验证，不作为匿名公网安全方案。
+生成应用的旧 `/data/{version_id}/{entity}` 服务端 CRUD 已移除。预览网关与工作台共用同一 origin：本地工作台地址下的 `/preview/...` 路径，Azure 为该 Container App 默认 HTTPS FQDN 下的同名路径；不再依赖 `PREVIEW_BASE_DOMAIN`、项目子域或 wildcard DNS/TLS。一次性、2 分钟票据兑换为 60 分钟会话后，网关将随机会话值放在版本限定的 `/preview/s/{session}/v/{version_id}/` 路径中，静态资源经同一路径校验；服务端还须校验项目归属、规范化路径。响应禁缓存和 Referer，服务禁访问日志；工作台“重新载入”重新签发票据。共享 origin 下路径/票据不能约束浏览器脚本读写工作台及其他项目的同源资源；`connect-src 'none'` 或同源 iframe `sandbox` 也不能替代原先的 origin 隔离。`backend/preview.py` 与 `backend/api.py` 已改为同源路径，本地定向测试通过，Azure 浏览器验收仍待执行。
 
 连接层：SSE 建联后立即发送当前状态和游标，每 15 秒心跳（配置值）；断开时指数退避并加抖动重连，携带最后 `seq`；重连先补历史再接实时。刷新后以服务端状态为准，对话轮次由卡片事件、消息及解释结果、已提交决策和 run 终态重建；原始模型事件只用于诊断，不作为访客主界面时间线。SSE 失败可轮询回放 API。连接恢复先按 `submission_id` 对账解释状态，不因重连生成新消息或重提构建命令。API 身份与访问控制在 MVP1 可使用服务端签发的访客凭证；公开部署前必须证明项目之间不可互读，不把可猜测 ID 当授权。
 
@@ -197,9 +197,9 @@ API 读 run 时补充服务端 `active_elapsed_seconds` 与 `execution_running`�
 
 本地工作区使用 `data/projects/{project_id}/runs/{run_id}/workspace`，仅作可删除的构建缓存；交付版本文本存入 SQLite `version_files`。Azure 同样只把工作区和候选目录当临时构建缓存，已提交版本以 Azure SQL `version_files` 按 `version_id/path` 保存文本。路径由服务端 ID 构造且 canonicalize，不能接受用户拼接路径。manifest 记录模板版本、源 hash、依赖锁、构建/测试结果、预览配置。可生成的 Web 应用限固定 React + TypeScript + Vite 模板的前端入口、静态资产、`GeneratedAppStorage` 及符合单进程/单端口边界的可选后端；生成项目不得访问主应用的数据库/密钥。业务 `localStorage` 数据不进入产物快照，代码回滚不改写该数据；旧代码与现有数据格式兼容性不在本轮保证范围。
 
-**Docker 可用时**：每 run 独立非 root 容器，资源/时长限制、只挂载工作区、默认无宿主网络及密钥，依赖下载阶段与运行阶段分离；预览通过独立 origin 和受限代理访问，禁止同源权限继承，设置 CSP、sandbox iframe、短期 URL 和反向代理路径检查。Docker 本身也需本地实测。
+**Docker 可用时**：每 run 独立非 root 容器，资源/时长限制、只挂载工作区、默认无宿主网络及密钥，依赖下载阶段与运行阶段分离；构建执行与服务端数据边界仍需单独验证。当前共享 origin 预览方案没有浏览器跨项目安全隔离；若以后要求公开运行不可信生成代码，必须重新设计独立 origin 或等效可信浏览器边界、受限代理、CSP 与短期 URL。Docker 本身也需本地实测。
 
-**同容器受信演示**：本地和 `APP_ENV=azure_demo` 均在 API 所在环境构建生成代码；最小进程权限、受控文件、时间限制及不同预览 origin 只能减小风险，**不能视为安全沙箱**。Azure 入口须由身份认证或 IP 允许列表限制为受信人员，单副本运行并实测未授权拒绝；若以后开放匿名用户生成，须增加隔离 Runner 并重新验收。Atoms 是否提供足够的沙箱或可运行 Python 服务均未验证，见本机 Atoms Spike 过程记录。
+**同容器受信演示**：本地和 `APP_ENV=azure_demo` 均在 API 所在环境构建生成代码；最小进程权限、受控文件和时间限制只能减小风险，**不能视为安全沙箱**。共享 origin 使其他项目业务数据可被同源预览脚本读取；Azure 的模型 Key 仅留在当前页面内存，减少持久泄露，但不提供同源脚本运行时隔离。Azure 入口须由身份认证或 IP 允许列表限制为受信人员，单副本运行并实测未授权拒绝。若以后开放匿名用户生成，须增加隔离 Runner、浏览器 origin 边界并重新验收。Atoms 是否提供足够的沙箱或可运行 Python 服务均未验证，见本机 Atoms Spike 过程记录。
 
 ## 8. 运行风险与验证映射
 
@@ -209,14 +209,14 @@ API 读 run 时补充服务端 `active_elapsed_seconds` 与 `execution_running`�
 | Cloud DB 不可直接用作 checkpointer | 外部持久 SQL；导出/迁移记录 | S2 |
 | AI Library 仅供 Atoms Agent 接入 | `ModelGateway` 改用外部模型 API 与服务器密钥 | S3 |
 | GitHub 无法直连现有仓库 | 新建私人仓库后在隔离分支拉入，或文件上传/外部部署 | S1、S8 |
-| 预览执行逃逸/密钥泄漏 | 独立 Runner/origin/密钥边界；无隔离不公开执行 | S6 + 安全 TC |
+| 预览执行逃逸/密钥泄漏 | 当前共享 origin 的项目 ID 前缀不是安全边界；仅受信演示，开放不可信代码前重建 Runner/origin/密钥边界 | S6 + 安全 TC；详见 ADR-026 |
 | 发布与开发环境行为不一致 | 同一端到端 TC 分别跑 Preview 与公开链接 | S7 + 端到端 TC |
 
 验收 TC 分类和维护责任见 [PRD §7](PRD.md#7-测试与-tc-维护)。
 
 ## 9. 非功能验收初值
 
-- 正确性：同一幂等键重复提交只对应一个 run/确认/产物；同项目事件 `seq` 严格递增；跨项目读取被拒绝。以自动化 TC 验证。
+- 正确性：同一幂等键重复提交只对应一个 run/确认/产物；同项目事件 `seq` 严格递增；平台 API 的未授权跨项目读取被拒绝，生成应用的正常存储读写使用项目前缀且不串键。共享 origin 下不能声称浏览器脚本跨项目读取被拒绝。以自动化 TC 验证。
 - 恢复：服务重启后项目、等待确认、最后好版本可恢复；SSE 中断后回放缺失事件。以断网/重启故障注入验证。
 - 体验：本地开发环境项目列表与已存卡片的 95% 请求在 2 秒内返回；生成期间每个 Node 转移后 3 秒内出现阶段事件。模型与构建耗时单独展示，不伪装为页面卡顿。该目标在校准阶段按实测调整。
 - 资源：单项目同时一个活动或待决 run；自动修复最多 60 轮，连续无进展或错误复现提前停止，人工每次动作只执行一轮；所有人工轮次沿用同一 run 的模型调用、token 与 Agent 执行时长硬预算，等待人工期间暂停计时。Runner 的 CPU、内存、磁盘与网络配额在选型 Spike 后量化，未量化前不允许公开执行不可信代码。

@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from .messages import MessageService
-from .preview_access import PreviewAccess, preview_origin
+from .preview_access import PreviewAccess
 from .settings import Settings
 from .store import Conflict, NotFound, Store
 from .workflow import Workflow
@@ -473,14 +473,14 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
         project_access(request, version["project_id"])
         if settings.app_env not in {"local", "azure_demo"}:
             raise HTTPException(status_code=503, detail="当前环境尚无预览服务")
+        if version.get("manifest", {}).get("template") != "react-vite-v4":
+            raise HTTPException(status_code=409, detail="旧版应用未使用项目存储前缀，不能在同源预览中打开；请基于此版本重新生成")
         try:
             store.get_version_file(version_id, "dist/index.html")
         except NotFound:
             raise HTTPException(status_code=404, detail="该版本尚无可预览的构建产物")
         ticket, expires = preview_access.issue_ticket(version_id, version["project_id"])
-        origin = preview_origin(version["project_id"], settings.preview_port,
-                                settings.preview_base_domain if settings.app_env == "azure_demo" else "localhost")
-        return {"url": f"{origin}/open/{version_id}?ticket={ticket}", "expires_at": expires,
+        return {"url": f"{settings.workbench_origin.rstrip('/')}/preview/open/{version_id}?ticket={ticket}", "expires_at": expires,
                 "scope": "trusted_azure_demo" if settings.app_env == "azure_demo" else "local_preview_only"}
 
     @app.get("/api/versions/{version_id}/files/{name:path}")
@@ -492,6 +492,10 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
         except NotFound:
             raise HTTPException(status_code=404, detail="文件不存在")
         return PlainTextResponse(content)
+
+    if settings.app_env in {"local", "azure_demo"}:
+        from .preview import create_preview_app
+        app.mount("/preview", create_preview_app(settings), name="preview")
 
     dist = settings.root / "web" / "dist"
     if dist.exists():

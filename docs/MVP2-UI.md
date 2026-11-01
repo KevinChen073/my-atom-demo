@@ -2,7 +2,7 @@
 
 状态：2026-10-31，MVP2 实施设计。产品范围以 [PRD](PRD.md) 与 [架构](ARCHITECTURE.md) 为准，桌面布局遵循用户确认的 [工作台 v2](WORKBENCH-V2.md)，MVP1 卡片门禁延续 [MVP1 UI](MVP1-UI.md)。冲突按 [ADR-002](decisions/ADR-002-change-control.md) 处理。
 
-**当前边界**：本页关于 `manifest.entities`、服务端数据 API 和旧版 schema 的描述是 MVP2 旧实施设计；生成交付物以 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 为准。澄清/计划/修复等待态的提交位置与语义以 [ADR-010](decisions/ADR-010-structured-card-single-send.md) 为准。回滚指针、`localStorage` 提示与 5 版上限已实现；浏览器业务交互仍需实际验收。
+**当前边界**：本页关于 `manifest.entities`、服务端数据 API 和旧版 schema 的描述是 MVP2 旧实施设计；生成交付物以 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 为准。2026-11-01 的 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) 又将每项目独立预览 origin 改为共享 origin 与项目 ID 键前缀，尚未改代码。澄清/计划/修复等待态的提交位置与语义以 [ADR-010](decisions/ADR-010-structured-card-single-send.md) 为准。回滚指针、`localStorage` 提示与 5 版上限已实现；浏览器业务交互仍需实际验收。
 
 ## 1. 核心体验
 

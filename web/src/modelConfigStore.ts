@@ -6,12 +6,19 @@ export type ModelConfig = {
 }
 
 const STORAGE_KEY = 'myatom.model-config.v1'
+export const isLocalWorkbench = ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)
 export const DEFAULT_MODEL: ModelConfig = {
   provider: 'deepseek', api_key: '', base_url: 'https://api.deepseek.com', model_name: 'deepseek-chat',
 }
 
 export function readSavedModelConfig(): ModelConfig | null {
   try {
+    if (!isLocalWorkbench) {
+      // Remove any value saved by an earlier cloud build. Shared-origin previews
+      // must not find a persistent model credential after a page refresh.
+      localStorage.removeItem(STORAGE_KEY)
+      return null
+    }
     const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')
     if (!value || !['deepseek', 'openai_compatible'].includes(value.provider)
       || typeof value.api_key !== 'string' || typeof value.base_url !== 'string'
@@ -24,6 +31,10 @@ let activeConfig: ModelConfig | null = readSavedModelConfig()
 export function currentModelConfig(): ModelConfig | null { return activeConfig }
 export function setActiveModelConfig(config: ModelConfig | null, persist = false): void {
   activeConfig = config
+  if (!isLocalWorkbench) {
+    try { localStorage.removeItem(STORAGE_KEY) } catch { /* Storage may be disabled. */ }
+    return
+  }
   if (!persist) return
   try {
     if (config) localStorage.setItem(STORAGE_KEY, JSON.stringify(config))

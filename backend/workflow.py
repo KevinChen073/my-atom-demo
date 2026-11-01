@@ -136,7 +136,7 @@ def build_failure_summary(events: list[dict[str, Any]], diagnosis: dict[str, Any
         attempts.append({"number": len(attempts) + 1, "command": step.get("command", ""),
                          "error": "; ".join(errors[:2])[:420] if errors else (lines[-1].strip()[:240] if lines else "构建命令失败")})
     if any("appData" in item["error"] for item in attempts):
-        cause = "此前候选代码引用过模板中不存在的 appData；最近一次错误见下方。当前交付物仅允许项目预览域的 localStorage。"
+        cause = "此前候选代码引用过模板中不存在的 appData；最近一次错误见下方。当前交付物只通过项目存储适配器保存业务数据。"
     elif diagnosis.get("category") == "source_compile":
         cause = "生成的 TypeScript 源码未通过编译；可在保留现有需求与计划的前提下修复。"
     elif diagnosis.get("category") in {"environment_failure", "dependency_install"}:
@@ -205,7 +205,7 @@ def normalize_plan(raw: dict[str, Any]) -> dict[str, Any]:
         for clause in re.split(r"[，,。；;\n]", item):
             for match in storage.finditer(clause):
                 if not negation.search(clause[:match.start()].rstrip()):
-                    raise ValueError("生成应用只能在独立预览 origin 使用 localStorage 保存业务数据")
+                    raise ValueError("生成应用只能通过项目存储适配器在 localStorage 保存业务数据")
     return plan
 
 
@@ -320,7 +320,7 @@ class Workflow:
         for correction in range(2):
             raw = self.model.generate(
                 run_id, "clarify", f"card{count + 1}-rev{state.get('clarify_revision', 0)}-c{correction}",
-                "你是 Web 产品需求分析师。输出 JSON：summary 字符串、assumptions 字符串数组、questions 数组，每轮必须 1–3 项，每项 text/default/required。只问影响实现且未回答的关键问题，不重复原需求长摘要。固定 React+TypeScript+Vite；业务数据只在项目独立预览 origin 的 localStorage 中保存，不提供服务端业务 CRUD。",
+                "你是 Web 产品需求分析师。输出 JSON：summary 字符串、assumptions 字符串数组、questions 数组，每轮必须 1–3 项，每项 text/default/required。只问影响实现且未回答的关键问题，不重复原需求长摘要。固定 React+TypeScript+Vite；业务数据只通过项目存储适配器在工作台共享 origin 的 localStorage 中保存，不提供服务端业务 CRUD。",
                 f"原始需求：{state['request_text']}\n过往问答：{dumps(history)}\n尚缺信息：{dumps(state.get('open_gaps', []))}"
                 + (f"\n上一可用版本的已确认功能：{dumps(self.store.get_run(run_id).get('base_spec', {}).get('plan', {}).get('features', []))}。只澄清本轮变化。" if self.store.get_run(run_id).get('base_version_id') else "")
                 + (f"\n上次问题校验失败：{last_error}" if last_error else "") + "\n请给出本轮澄清 JSON。",
@@ -369,7 +369,7 @@ class Workflow:
         self.store.update_run(state["run_id"], status="clarifying", phase="ClarityGate", event_type="phase", event_payload={"phase": "ClarityGate"})
         raw = self.model.generate(
             state["run_id"], "clarity_gate", f"card{state['clarification_card_count']}-rev{state.get('clarify_revision', 0)}",
-            "判断已确认的需求是否足够生成固定 React+TypeScript+Vite 应用。只输出 JSON：complete 布尔值、missing 字符串数组。不要因非关键细节继续追问；如缺少影响实现的约束，complete=false。业务存储只允许预览 origin 的 localStorage。",
+            "判断已确认的需求是否足够生成固定 React+TypeScript+Vite 应用。只输出 JSON：complete 布尔值、missing 字符串数组。不要因非关键细节继续追问；如缺少影响实现的约束，complete=false。业务存储只允许通过项目存储适配器使用共享 origin 的 localStorage。",
             f"需求：{state['request_text']}\n上一可用版本：{dumps(self.store.get_run(state['run_id']).get('base_spec'))}\n已确认问答：{dumps(state.get('clarification_history', []))}\n请判断是否完整。",
             max_tokens=600,
         )
@@ -413,7 +413,7 @@ class Workflow:
         if incompatible_request:
             raise PlanValidationError("incompatible_request")
         system = ("你是 Web 应用架构师。输出 JSON：title、pages（name/purpose）、features、data_model、acceptance、tasks、limitations。"
-                  "数组成员除 pages 外均为字符串。固定 React+TypeScript+Vite；生成应用业务数据只使用其独立预览 origin 的 localStorage，"
+                  "数组成员除 pages 外均为字符串。固定 React+TypeScript+Vite；生成应用业务数据只通过项目存储适配器使用共享 origin 的 localStorage，"
                   "同一项目跨版本复用该 origin。不得设计服务端业务 CRUD、SQL、缓存、外部接口或第三方库。"
                   "若需求要刷新后保留业务数据，data_model 必须逐项写明由 localStorage 保存的字段，acceptance 必须包含刷新读回；不能把数据模型留空或只写页面状态。"
                   "limitations 不得与前述存储方案冲突；浏览器清除存储或更换浏览器后数据无法恢复，业务数据不随代码版本回滚。"
@@ -443,7 +443,7 @@ class Workflow:
                 )
                 if persistence_requested:
                     if not any(re.search(r"\blocalStorage\b", item, re.IGNORECASE) for item in plan["data_model"]):
-                        raise ValueError("需要持久化的计划必须在数据模型中明确使用项目预览域 localStorage")
+                        raise ValueError("需要持久化的计划必须在数据模型中明确使用项目存储适配器与 localStorage")
                     if not any(re.search(r"刷新|重开|重新进入", item) for item in plan["acceptance"]):
                         raise ValueError("需要持久化的计划必须验收刷新或重进后的数据读回")
                     if any(re.search(r"(?:不使用|不用|禁止|不得|避免|不采用).{0,8}(?:浏览器存储|本地存储|localStorage)", item, re.IGNORECASE)
@@ -479,6 +479,11 @@ class Workflow:
         self.runner.prepare(state["project_id"], state["run_id"])
         if run.get("base_version_id"):
             base = self.store.get_version(run["base_version_id"])
+            if base.get("manifest", {}).get("template") != "react-vite-v4":
+                self.store.update_run(state["run_id"], event_type="legacy_base_regeneration", event_payload={
+                    "base_version_id": run["base_version_id"],
+                    "reason": "旧版未使用项目存储前缀，本轮按合并后的完整计划重新生成"})
+                return {}
             files: dict[str, str] = {}
             for entry in base["manifest"].get("files", []):
                 if not isinstance(entry, dict):

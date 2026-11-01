@@ -2,7 +2,7 @@
 
 状态：2026-10-31，实施设计。范围遵循 [PRD](PRD.md)、[架构](ARCHITECTURE.md)和已确认的[桌面工作台视觉方向](WORKBENCH-V2.md)；变更冲突按 [ADR-002](decisions/ADR-002-change-control.md)处理。示例内容唯一来源是 [`examples/catalog.json`](../examples/catalog.json)。
 
-生成示例的业务持久化与后端限制以 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 为准；当前示例目录和自动测试已按项目预览域 `localStorage` 更新。真实模型输出及浏览器内业务流程仍需逐例验收。
+生成示例的业务持久化与后端限制以 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 为准；当前示例目录和自动测试已按旧项目预览域 `localStorage` 更新。共享 origin 与项目 ID 键前缀是 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) 的新目标，尚未迁移示例生成链路。真实模型输出及浏览器内业务流程仍需逐例验收。
 
 ## 目标与布局
 

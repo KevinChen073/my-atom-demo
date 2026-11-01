@@ -16,9 +16,9 @@ import uvicorn
 from fastapi.testclient import TestClient
 
 from backend.api import create_app, owner_hash
-from backend.preview import create_preview_app
 from backend.settings import Settings
 from backend.store import Store
+from tests.test_shared_origin_preview import _version
 from tests.test_mvp1 import FakeModel
 from tests.test_mvp1 import wait_status
 
@@ -40,7 +40,7 @@ class TodoFakeModel(FakeModel):
         if node == "code_loop":
             return {"files": {
                 "src/App.tsx": "import './app.css'\nimport { useAppState } from './hooks/useAppState'\nexport default function App() { const { rows, title, setTitle, add, toggle, remove, error } = useAppState(); return <main><h1>待办应用</h1><input aria-label=\"任务名称\" value={title} onChange={e => setTitle(e.target.value)} /><button onClick={add}>新增</button><p role=\"alert\">{error}</p><ul>{rows.map(row => <li key={row.id}><span>{row.title} {row.completed ? '已完成' : '未完成'}</span><button onClick={() => toggle(row.id)}>切换完成</button><button onClick={() => remove(row.id)}>删除</button></li>)}</ul></main> }",
-                "src/hooks/useAppState.ts": "import { useState } from 'react'\ntype Row = { id: string; title: string; completed: boolean }\nexport function useAppState() { const [rows, setRows] = useState<Row[]>(() => { try { return JSON.parse(localStorage.getItem('todos') || '[]') as Row[] } catch { return [] } }); const [title, setTitle] = useState(''); const [error, setError] = useState(''); function save(next: Row[]) { try { localStorage.setItem('todos', JSON.stringify(next)); setRows(next); setError('') } catch { setError('本地保存失败') } } function add() { if (!title.trim()) return; save([...rows, { id: crypto.randomUUID(), title: title.trim(), completed: false }]); setTitle('') } function toggle(id: string) { save(rows.map(row => row.id === id ? { ...row, completed: !row.completed } : row)) } function remove(id: string) { save(rows.filter(row => row.id !== id)) } return { rows, title, setTitle, add, toggle, remove, error } }",
+                "src/hooks/useAppState.ts": "import { useState } from 'react'\nimport { generatedAppStorage } from './generatedAppStorage'\ntype Row = { id: string; title: string; completed: boolean }\nexport function useAppState() { const [rows, setRows] = useState<Row[]>(() => { try { return JSON.parse(generatedAppStorage.getItem('todos') || '[]') as Row[] } catch { return [] } }); const [title, setTitle] = useState(''); const [error, setError] = useState(''); function save(next: Row[]) { try { generatedAppStorage.setItem('todos', JSON.stringify(next)); setRows(next); setError('') } catch { setError('本地保存失败') } } function add() { if (!title.trim()) return; save([...rows, { id: crypto.randomUUID(), title: title.trim(), completed: false }]); setTitle('') } function toggle(id: string) { save(rows.map(row => row.id === id ? { ...row, completed: !row.completed } : row)) } function remove(id: string) { save(rows.filter(row => row.id !== id)) } return { rows, title, setTitle, add, toggle, remove, error } }",
                 "src/app.css": "body { font-family: sans-serif; } main { margin: 2rem auto; max-width: 40rem; }",
                 "readme.md": "# 待办应用\n任务保存在项目预览域 localStorage。",
             }}
@@ -62,19 +62,19 @@ def seed_version(store: Store, data_dir: Path, owner_token: str, title: str) -> 
     return project["id"], run["id"], version["id"]
 
 
-def open_preview(main: TestClient, preview: TestClient, version_id: str) -> str:
+def open_preview(main: TestClient, version_id: str) -> str:
     issued = main.get(f"/api/versions/{version_id}/preview")
     assert issued.status_code == 200, issued.text
     url = issued.json()["url"]
-    assert urlsplit(url).hostname == preview.base_url.host
-    assert urlsplit(url).port == 8001
-    assert urlsplit(url).path == f"/open/{version_id}"
-    first = preview.get(urlsplit(url).path + "?" + urlsplit(url).query, follow_redirects=False)
+    assert urlsplit(url).hostname == main.base_url.host
+    assert urlsplit(url).port == main.base_url.port
+    assert urlsplit(url).path == f"/preview/open/{version_id}"
+    first = main.get(urlsplit(url).path + "?" + urlsplit(url).query, follow_redirects=False)
     assert first.status_code == 303
     location = first.headers["location"]
-    assert location.startswith("/s/") and location.endswith(f"/v/{version_id}/")
+    assert location.startswith("/preview/s/") and location.endswith(f"/v/{version_id}/")
     assert "set-cookie" not in first.headers
-    assert preview.get(urlsplit(url).path + "?" + urlsplit(url).query, follow_redirects=False).status_code == 401
+    assert main.get(urlsplit(url).path + "?" + urlsplit(url).query, follow_redirects=False).status_code == 401
     return location
 
 
@@ -157,36 +157,31 @@ def test_sse_live_delivery_then_reconnect_without_duplicates(tmp_path: Path):
         assert not thread.is_alive()
 
 
-def test_preview_single_use_ticket_static_scope_and_project_origins(tmp_path: Path):
-    settings = Settings(data_dir=tmp_path, model_api_key="test-only", preview_port=8001)
+def test_preview_single_use_ticket_static_scope_on_shared_origin(tmp_path: Path):
+    settings = Settings(data_dir=tmp_path, model_api_key="test-only", workbench_origin="http://127.0.0.1:8000")
     store = Store(settings.app_db)
-    a_project, _, a_version = seed_version(store, tmp_path, "owner-a", "A")
-    b_project, _, b_version = seed_version(store, tmp_path, "owner-b", "B")
-    main_app, preview_app = create_app(settings, model=FakeModel()), create_preview_app(settings)
-    host_a = "p-" + a_project.replace("-", "") + ".localhost"
-    host_b = "p-" + b_project.replace("-", "") + ".localhost"
-    with TestClient(main_app) as main_a, TestClient(main_app) as main_b, TestClient(preview_app, base_url=f"http://{host_a}:8001") as preview_a, TestClient(preview_app, base_url=f"http://{host_b}:8001") as preview_b:
+    a_project, a_version = _version(store, "owner-a", "A", "react-vite-v4")
+    b_project, b_version = _version(store, "owner-b", "B", "react-vite-v4")
+    main_app = create_app(settings, model=FakeModel())
+    with TestClient(main_app, base_url=settings.workbench_origin) as main_a, TestClient(main_app, base_url=settings.workbench_origin) as main_b:
         main_a.cookies.set("myatom_guest", "owner-a")
         main_b.cookies.set("myatom_guest", "owner-b")
         assert main_b.get(f"/api/versions/{a_version}/preview").status_code == 404
-        assert preview_a.get(f"/v/{a_version}/").status_code == 404
-        a_path = open_preview(main_a, preview_a, a_version)
-        b_path = open_preview(main_b, preview_b, b_version)
-        index = preview_a.get(a_path)
+        assert main_a.get(f"/preview/s/no-ticket/v/{a_version}/").status_code == 401
+        a_path = open_preview(main_a, a_version)
+        b_path = open_preview(main_b, b_version)
+        index = main_a.get(a_path)
         assert index.status_code == 200
         assert "./assets/app.js" in index.text
         assert "connect-src 'none'" in index.headers["content-security-policy"]
-        assert preview_a.get(a_path + "assets/app.js").status_code == 200
-        assert preview_a.get("/api/projects").status_code == 404
-        assert preview_a.get(b_path).status_code in {401, 403}
-        assert preview_b.get(a_path).status_code in {401, 403}
-        assert preview_a.get(f"/data/{a_version}/todos").status_code == 404
-        assert host_a != host_b
-        session_token = a_path.split("/")[2]
+        assert main_a.get(a_path + "assets/app.js").status_code == 200
+        assert main_a.get(b_path).status_code == 200  # Same-origin URLs are bearer sessions.
+        assert main_b.get(a_path.replace(a_version, b_version)).status_code == 401
+        session_token = a_path.split("/")[3]
         with sqlite3.connect(tmp_path / "preview_access.sqlite3") as db:
             db.execute("UPDATE preview_sessions SET expires_at=? WHERE token_hash=?",
                        ("2000-01-01T00:00:00+00:00", hashlib.sha256(session_token.encode()).hexdigest()))
-        expired = preview_a.get(a_path)
+        expired = main_a.get(a_path)
         assert expired.status_code == 401
         assert expired.headers["content-type"].startswith("text/html")
         assert "重新载入" in expired.text

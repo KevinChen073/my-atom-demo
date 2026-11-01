@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from backend import azure_demo
 from backend.api import create_app
-from backend.preview_access import preview_host, preview_origin
 from backend.runner import LocalRunner
 from backend.settings import Settings
 
@@ -17,7 +16,7 @@ from backend.settings import Settings
 def _settings(tmp_path: Path, **changes) -> Settings:
     values = dict(data_dir=tmp_path, app_env="azure_demo",
                   azure_sql_connection_string="Server=tcp:my-atom.database.windows.net,1433;Database=my-atom;Encrypt=yes;TrustServerCertificate=no",
-                  workbench_origin="https://app.example.com", preview_base_domain="preview.example.net",
+                  workbench_origin="https://app.example.com",
                   trusted_demo=True)
     values.update(changes)
     return Settings(**values)
@@ -45,30 +44,25 @@ def test_azure_demo_rejects_invalid_config(tmp_path: Path):
         _settings(tmp_path, database_url="postgresql://test.invalid/myatom").validate_azure_demo()
     with pytest.raises(RuntimeError, match="HTTPS"):
         _settings(tmp_path, workbench_origin="http://app.example.com").validate_azure_demo()
-    with pytest.raises(RuntimeError, match="预览域"):
-        _settings(tmp_path, preview_base_domain="example.com").validate_azure_demo()
+    _settings(tmp_path, preview_base_domain="").validate_azure_demo()
 
 
-def test_azure_host_dispatch_preserves_project_preview_origins(tmp_path: Path, monkeypatch):
-    api, preview = FastAPI(), FastAPI()
+def test_azure_host_dispatch_uses_workbench_origin_for_preview(tmp_path: Path, monkeypatch):
+    api = FastAPI()
 
     @api.get("/probe")
     def api_probe():
         return {"surface": "api"}
 
-    @preview.get("/probe")
+    @api.get("/preview/probe")
     def preview_probe():
         return {"surface": "preview"}
 
     monkeypatch.setattr(azure_demo, "create_app", lambda settings, model=None: api)
-    monkeypatch.setattr(azure_demo, "create_preview_app", lambda settings: preview)
     app = azure_demo.create_azure_demo_app(_settings(tmp_path))
-    first, second = str(uuid4()), str(uuid4())
-    assert preview_origin(first, 8001, "preview.example.net") == f"https://{preview_host(first, 'preview.example.net')}"
-    assert preview_host(first, "preview.example.net") != preview_host(second, "preview.example.net")
     with TestClient(app, base_url="https://app.example.com") as client:
         assert client.get("/probe").json() == {"surface": "api"}
-        assert client.get("/probe", headers={"Host": preview_host(first, "preview.example.net")}).json() == {"surface": "preview"}
+        assert client.get("/preview/probe").json() == {"surface": "preview"}
         assert client.get("/probe", headers={"Host": "unknown.example.net"}).status_code == 421
 
 

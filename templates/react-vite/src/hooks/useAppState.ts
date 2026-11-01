@@ -1,4 +1,4 @@
-/** Generated app logic replaces this placeholder. Business data stays on this preview origin. */
+/** Generated app logic replaces this placeholder. Import generatedAppStorage for business data. */
 export function useAppState() {
   return {}
 }

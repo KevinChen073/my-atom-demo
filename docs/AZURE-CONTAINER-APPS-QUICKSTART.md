@@ -16,8 +16,8 @@
 | 里程碑 | 可说明什么 | 不能说明什么 |
 | --- | --- | --- |
 | A：官方样例 URL 可打开 | Azure 账户、Container Apps 环境、公开入口可用 | MYATOM 代码已部署或功能可用 |
-| B：MYATOM `/api/health` 返回 200 | 主 API 容器启动并可接请求 | LangGraph 恢复、持久化、模型、隔离预览或真实生成已通过 |
-| C：获授权评审 URL 完成 PRD 主旅程 | 按具体测试记录判定受信演示可用 | 单次成功不自动证明重启恢复、跨项目隔离及更新稳定性 |
+| B：MYATOM `/api/health` 返回 200 | 主 API 容器启动并可接请求 | LangGraph 恢复、持久化、模型、共享路径预览或真实生成已通过 |
+| C：获授权评审 URL 完成 PRD 主旅程 | 按具体测试记录判定受信演示可用 | 单次成功不自动证明重启恢复、浏览器凭证安全及更新稳定性 |
 
 ## 1. 最快试通 Azure：门户操作
 
@@ -68,14 +68,14 @@ az containerapp up `
 | Python 服务入口 | `backend/serve.py` 明确只允许 `APP_ENV=local`，主 API 在 `backend/api.py` | 生产入口使用受支持的 ASGI 启动方式；区分测试/生产环境，容器启动、健康检查与关停行为通过测试 |
 | 平台状态 | 本地默认 SQLite；旧 PostgreSQL schema v2 用例在 CI 通过 | Azure 使用专用空 Azure SQL 库；平台 schema v1 与版本文本 schema v2 显式迁移、重启读回，独立异常后台只读查询；不搬本地历史 |
 | 文件与 Runner | 本地 `data/`；同宿主 Runner；镜像已加入 Node/npm 并通过健康模式容器冒烟，尚未在容器内运行生成构建 | Azure SQL `version_files` 保存受控源码与文本构建资源；容器 `/app/data` 只作临时工作区，不配置外部挂载。验证重启后从 SQL 预览/回滚/迭代；仅在受信演示环境同容器构建，单副本/单 worker，绝非安全沙箱 |
-| 预览与入口 | 本地 `.localhost` 项目域 | 工作台 HTTPS 域与 `p-<uuid>.<预览域>` wildcard DNS/TLS 指向同一容器 8000；每项目 origin 隔离、票据、CSP、localStorage 刷新读回及入口认证/IP 允许列表实测 |
-| 模型与密钥 | 工作台可输入 DeepSeek / OpenAI 兼容 API Key，本地 `.env` 可预填 | 用户 Key 可按 [ADR-025](decisions/ADR-025-browser-model-settings.md) 保存到当前浏览器 localStorage；主 API 不持久保存 Key；真实模型测试需用户提供测试 Key |
+| 预览与入口 | 本地同源 `/preview/...` 路由、票据与项目 ID 注入定向测试通过 | Azure 默认 HTTPS FQDN 同 origin 的 `/preview/...` 路径与 `myatom.app.<项目 UUID>.*` 存储前缀；需在线验证票据/刷新读回及入口认证/IP 允许列表。前缀不构成安全隔离，详见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) |
+| 模型与密钥 | 工作台可输入 DeepSeek / OpenAI 兼容 API Key，本地 `.env` 可预填 | Azure 用户 Key 仅留在当前页面会话内存，刷新后重填；本地可保存到浏览器，见 [ADR-025](decisions/ADR-025-browser-model-settings.md)。主 API 不持久保存 Key；真实模型测试需用户提供测试 Key |
 
-上述条件不满足时，最多部署一个**受限测试容器**验证启动。受信演示需在容器配置 `APP_ENV=azure_demo`、`MYATOM_TRUSTED_DEMO=1`、`MYATOM_AZURE_SQL_CONNECTION_STRING`、`WORKBENCH_ORIGIN`、`PREVIEW_BASE_DOMAIN`、`MYATOM_DATA_DIR=/app/data`；用户在工作台填写模型 Key，服务器 `MODEL_API_KEY` 可不设置。Azure SQL 连接必须加密并验证证书，不设置 `MYATOM_DATABASE_URL`。目录不可写或域名配置不合规时启动会失败。访问限制必须先在 Container Apps ingress 层配置并实测。实际访问参数和凭证不写进仓库。
+上述条件不满足时，最多部署一个**受限测试容器**验证启动。目标受信演示配置为 `APP_ENV=azure_demo`、`MYATOM_TRUSTED_DEMO=1`、`MYATOM_AZURE_SQL_CONNECTION_STRING`、`WORKBENCH_ORIGIN`（可用 Container Apps 默认 HTTPS FQDN）、`MYATOM_DATA_DIR=/app/data`；不需要 `PREVIEW_BASE_DOMAIN`。同源路由已在代码实现，本地定向测试通过，Azure 在线功能仍待验证。用户在工作台填写模型 Key，服务器 `MODEL_API_KEY` 可不设置；Azure 页面不持久保存 Key，但同源运行时仍有风险，见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md)。Azure SQL 连接必须加密并验证证书，不设置 `MYATOM_DATABASE_URL`。目录不可写或域名配置不合规时启动会失败。访问限制必须先在 Container Apps ingress 层配置并实测。实际访问参数和凭证不写进仓库。
 
 ### 3.1.1 容器临时工作区与运行参数
 
-镜像内 `/app/data` 已为 `myatom` 用户创建；Container Apps 不配置 `volumeMounts` 或 `template.volumes`。设置 `MYATOM_DATA_DIR=/app/data`、单副本和单一 Uvicorn worker。镜像默认是 `container_smoke`；专用 Azure SQL 库 schema v1/v2 迁移、HTTPS 工作台和 wildcard 预览域、受信入口限制就绪后，才将运行配置改为 `azure_demo`。Azure 的入口认证或 IP 规则须覆盖工作台及所有预览子域。[Container Apps 存储说明](https://learn.microsoft.com/en-us/azure/container-apps/storage-mounts)明确容器文件系统在关闭或重启时会丢失；所以它只能存未提交的临时文件。
+镜像内 `/app/data` 已为 `myatom` 用户创建；Container Apps 不配置 `volumeMounts` 或 `template.volumes`。设置 `MYATOM_DATA_DIR=/app/data`、单副本和单一 Uvicorn worker。镜像默认是 `container_smoke`；专用 Azure SQL 库 schema v1/v2 迁移、共享路径预览代码迁移、浏览器模型 Key 风险处理和受信入口限制就绪后，才将运行配置改为 `azure_demo`。Azure 的入口认证或 IP 规则须覆盖工作台与同 origin 的全部预览路径。[Container Apps 存储说明](https://learn.microsoft.com/en-us/azure/container-apps/storage-mounts)明确容器文件系统在关闭或重启时会丢失；所以它只能存未提交的临时文件。
 
 ### 3.1.2 本地容器启动冒烟
 
@@ -86,11 +86,11 @@ docker build -t myatom-api-smoke .
 docker run --rm -p 127.0.0.1:18000:8000 myatom-api-smoke
 ```
 
-另开终端访问 `http://127.0.0.1:18000/api/health`，预期 HTTP 200；访问 `http://127.0.0.1:18000/`，预期 HTTP 503。然后停止容器，确认进程退出。503 是 `container_smoke` 有意封闭应用功能的结果；只有 Azure SQL、HTTPS 预览域和受信入口限制实测后，才可开放受信演示。固定标签镜像已由 [GitHub 工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41316205814)构建并在 Azure 健康冒烟通过；本机缺少 Docker，`azure_demo` 与容器重启对账尚未实测。
+另开终端访问 `http://127.0.0.1:18000/api/health`，预期 HTTP 200；访问 `http://127.0.0.1:18000/`，预期 HTTP 503。然后停止容器，确认进程退出。503 是 `container_smoke` 有意封闭应用功能的结果；只有 Azure SQL、共享路径 HTTPS 预览、模型 Key 风险处理和受信入口限制实测后，才可开放受信演示。固定标签镜像已由 [GitHub 工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41316205814)构建并在 Azure 健康冒烟通过；本机缺少 Docker，`azure_demo` 与容器重启对账尚未实测。
 
 ### 3.2 准备完成后的 GitHub 自动部署命令模板
 
-官方 `up --repo` 会创建 Azure 容器资源、镜像仓库与 GitHub Actions 工作流，并要求授权访问 GitHub；**不要直接对当前 `main` 和未就绪代码执行**。以下模板只用于准备部署分支的容器入口；之后仍须配置数据库、访问限制和预览域。把尖括号内容替换为真实值。
+官方 `up --repo` 会创建 Azure 容器资源、镜像仓库与 GitHub Actions 工作流，并要求授权访问 GitHub；**不要直接对当前 `main` 和未就绪代码执行**。以下模板只用于准备部署分支的容器入口；之后仍须配置数据库、访问限制和共享路径预览。把尖括号内容替换为真实值。
 
 ```powershell
 $resourceGroup = "<MYATOM 专用资源组>"
@@ -118,8 +118,8 @@ az containerapp up `
 1. 在 Azure Container App 的配置中添加运行时密钥，并通过环境变量引用；不要在命令行参数、GitHub 文件或截图中粘贴实际 Key。方法见 [Container Apps 密钥](https://learn.microsoft.com/en-us/azure/container-apps/manage-secrets)与[环境变量](https://learn.microsoft.com/en-us/azure/container-apps/environment-variables)。
 2. 获取部署 URL，访问 `https://<主域名>/api/health`，检查 `ok`、环境和模型配置状态。这个接口只能验证 API 启动。失败时看 [容器日志](https://learn.microsoft.com/en-us/azure/container-apps/log-streaming)；日志不得包含 Key。
 3. 单独部署异常后台，使用 `OPS_AZURE_SQL_CONNECTION_STRING` 的专用只读账号，仅授权四个 `ops_*` 视图；主应用的已提交版本从 Azure SQL 读取，容器 `/app/data` 只作临时构建。核对访问限制、目录权限、域名和证书；主容器内构建仅限获授权评审使用。
-4. 在获授权测试 URL 逐项执行 `TC-E2E-01`（生成应用操作与刷新读回）、`TC-SEC-01`（密钥与跨项目隔离）、重启后 Azure SQL 项目/checkpoint/源码/预览文件恢复、SSE 回放、版本回滚与迭代、独立异常后台只读查询；验证未授权请求被拒绝。记录环境、Git 提交号、URL、时间、实际结果、截图与脱敏日志。
+4. 在获授权测试 URL 逐项执行 `TC-E2E-01`（生成应用操作与刷新读回）、[共享预览 TC](../tests/cases/SHARED-ORIGIN-PREVIEW.md)（正常键前缀读写与同源风险取证）、重启后 Azure SQL 项目/checkpoint/源码/预览文件恢复、SSE 回放、版本回滚与迭代、独立异常后台只读查询；验证未授权请求被拒绝。`TC-SEC-01` 的旧“预览脚本无法读取工作台 Key/其他项目键”在新架构下不能判通过。记录环境、Git 提交号、URL、时间、实际结果、截图与脱敏日志。
 
 ## 本文未验证的边界
 
-这份指南核对了 Azure 官方操作步骤与当前仓库结构；GitHub 准备分支已推送，复用现有 Azure 容器应用完成新镜像启动冒烟，未创建额外云资源。本机未检测到 Azure CLI。容器已配置托管身份 Azure SQL 连接串，schema v2 已由用户确认并经门户只读查询核对；容器连接暂被 SQL 防火墙阻断。受信演示交付仍依赖容器 SQL 读写、§3.1 的访问限制、独立 HTTPS 预览域和真实环境验收；GitHub 到 Azure 的自动更新尚未配置。
+这份指南核对了 Azure 官方操作步骤与当前仓库结构；GitHub 准备分支已推送，复用现有 Azure 容器应用完成新镜像启动冒烟，未创建额外云资源。本机未检测到 Azure CLI。容器已配置托管身份 Azure SQL 连接串，schema v2 已由用户确认并经门户只读查询核对；容器连接暂被 SQL 防火墙阻断，用户选择暂不修改防火墙。受信演示交付仍依赖容器 SQL 读写、§3.1 的访问限制、共享路径预览迁移、模型 Key 风险处理和真实环境验收；GitHub 到 Azure 的自动更新尚未配置。

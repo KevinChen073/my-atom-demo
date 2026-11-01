@@ -8,6 +8,7 @@ from typing import Any
 
 
 REQUIRED_FILES = {"src/App.tsx", "src/app.css", "src/hooks/useAppState.ts", "readme.md"}
+TEMPLATE_STORAGE_FILE = "src/hooks/generatedAppStorage.ts"
 GENERATED_FILE = re.compile(r"(?:src/App\.tsx|src/app\.css|src/hooks/[A-Za-z][A-Za-z0-9]*\.ts|src/components/[A-Za-z][A-Za-z0-9]*\.tsx|readme\.md)\Z")
 MAX_GENERATED_FILES = 12
 MAX_GENERATED_BYTES = 180_000
@@ -20,6 +21,7 @@ SOURCE_FAILURE_REASONS = {
     "updater_side_effect": "状态更新函数中包含持久化或再次更新状态",
     "component_state": "页面或组件使用了应放在 hooks/ 的状态逻辑",
     "ui_storage_access": "页面或组件直接访问 localStorage",
+    "unscoped_storage_access": "生成源码直接访问浏览器存储或清理其他项目数据",
     "missing_files_mapping": "模型未返回源码文件映射",
     "invalid_partial_files": "局部修复只允许返回指定文件，不能增删其他候选文件",
     "invalid_layout": "文件布局、数量或入口不符合固定模板",
@@ -70,8 +72,8 @@ def source_contract_prompt(target_files: list[str] | None = None) -> str:
         + "App.tsx 必须导入 './app.css' 和 './hooks/useAppState'；组件和 App 只组合界面，不调用 useState/useEffect/useReducer/useRef；状态、持久化和业务逻辑都放 hooks/。"
         + "React 状态更新函数只计算下一状态，不在更新函数内保存数据或再次调用 setState；副作用放在事件处理函数。"
         + "样式只写 src/app.css；readme.md 用中文说明功能和本地数据范围。"
-        + "生成应用业务数据只使用本项目独立预览 origin 的 localStorage，且只在 hooks/ 内访问；刷新后读取，读写异常在界面明确提示，写入失败不能显示已保存。"
-        + "同一项目跨版本共享 origin，但业务数据不随代码版本回滚；读取旧格式时要明确提示。"
+        + "生成应用与工作台共用 origin。业务数据只在 hooks/ 内通过模板内置的 './generatedAppStorage' 的 generatedAppStorage.getItem/setItem/removeItem 读写；不要生成该模板文件，不要在生成源码中直接访问 localStorage 或其他浏览器存储，也不要调用 clear 或枚举键。模板按服务端注入的项目 UUID 自动加 myatom.app.<项目 UUID>. 前缀；刷新后读取，读写异常在界面明确提示，写入失败不能显示已保存。"
+        + "同一项目跨版本共用前缀，但业务数据不随代码版本回滚；读取旧格式时要明确提示。"
         + "涉及计时用 Date.now() 真实时间差；结算使用稳定标识防止重复计数。涉及提交的按钮防连续重复触发。"
         + "只允许 React、模板文件和已生成文件的静态导入；禁止外部接口、图片 URL、fetch、服务端 CRUD、SQL、浏览器凭证、动态 import、eval 和第三方库。"
         + "不要生成 package.json、main.tsx 或其他模板配置。输出前在内部核对 files 路径、hook 数量与 TypeScript 状态引用；只输出形如 {\"files\":{\"src/App.tsx\":\"...\"}} 的合法 JSON，源码字符串里的换行和双引号必须转义，不输出清单或解释。"

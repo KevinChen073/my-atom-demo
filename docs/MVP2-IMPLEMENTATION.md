@@ -2,7 +2,7 @@
 
 状态：2026-10-31 本地开发实现；范围依 [PRD](PRD.md) 与 [架构](ARCHITECTURE.md)，变更规则见 [ADR-002](decisions/ADR-002-change-control.md)。用例见 [MVP2 TC](../tests/cases/MVP2.md)，实测过程留在本机 `D:\AI\ATOM笔试\docs\MVP2-VERIFICATION.md`。
 
-**历史实施记录**：本页描述当时实际实现的服务端 `AppDataService`/SQLite，不代表用户随后确认的目标边界。2026-11-01 已迁移为每项目独立预览 origin 的 `localStorage`、候选检查及最多 5 个可用快照；实际浏览器业务交互与公网域名仍需复测。最新边界见 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md)。
+**历史实施记录**：本页描述当时实际实现的服务端 `AppDataService`/SQLite，不代表用户随后确认的目标边界。2026-11-01 已迁移为每项目独立预览 origin 的 `localStorage`、候选检查及最多 5 个可用快照；实际浏览器业务交互与公网域名仍需复测。最新业务边界见 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md)；共享 origin 的新设计见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md)，代码尚未迁移。
 
 ## 实时进度
 

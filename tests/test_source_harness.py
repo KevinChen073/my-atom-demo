@@ -108,6 +108,22 @@ def test_hook_count_feedback_includes_required_hook(tmp_path: Path):
                "hook 数量 5 个" in issue["detail"] and "最多 4 个" in issue["detail"] for issue in issues)
 
 
+def test_generated_storage_adapter_is_allowed_but_direct_storage_is_rejected(tmp_path: Path):
+    runner = LocalRunner(Settings(data_dir=tmp_path), Store(tmp_path / "app.sqlite3"))
+    files = {
+        "src/App.tsx": "import './app.css'\nimport { useAppState } from './hooks/useAppState'\nexport default function App() { useAppState(); return <main /> }",
+        "src/app.css": "main { color: black }",
+        "src/hooks/useAppState.ts": "import { generatedAppStorage } from './generatedAppStorage'\nexport function useAppState() { return generatedAppStorage.getItem('todos') }",
+        "readme.md": "# 测试",
+    }
+    assert runner.inspect_generated(files) == []
+    assert (runner.prepare("project", "run") / "src/hooks/generatedAppStorage.ts").is_file()
+    bad = {**files, "src/hooks/useAppState.ts": "export function useAppState() { return localStorage.getItem('todos') }"}
+    issues = runner.inspect_generated(bad)
+    assert any(issue["file"] == "src/hooks/useAppState.ts" and "不得直接访问浏览器存储" in issue["detail"] for issue in issues)
+    assert any(issue["file"] is None for issue in runner.inspect_generated({**files, "src/hooks/generatedAppStorage.ts": "export const generatedAppStorage = localStorage"}))
+
+
 def test_unlocatable_layout_error_regenerates_full_map(tmp_path: Path):
     model = CaptureRepairModel("layout")
     app = create_app(Settings(data_dir=tmp_path, model_api_key="test-only"), model=model)

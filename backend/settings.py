@@ -43,7 +43,6 @@ class Settings:
         if self.app_env != "azure_demo":
             return
         origin = urlparse(self.workbench_origin)
-        domain = self.preview_base_domain.lower().strip(".")
         if not self.trusted_demo or not self.azure_sql_connection_string or self.database_url:
             raise RuntimeError("Azure 受信演示须显式启用并仅配置 Azure SQL")
         sql = self.azure_sql_connection_string.lower()
@@ -55,9 +54,6 @@ class Settings:
         if (origin.scheme != "https" or not origin.hostname or origin.netloc != origin.hostname
                 or origin.path not in {"", "/"} or origin.query or origin.fragment):
             raise RuntimeError("Azure 工作台必须配置 HTTPS 单一 origin")
-        if (not re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)+", domain)
-                or origin.hostname == domain or origin.hostname.endswith("." + domain)):
-            raise RuntimeError("预览域须与工作台分离，且配置可用的独立域名")
         try:
             self.data_dir.mkdir(parents=True, exist_ok=True)
             with tempfile.TemporaryFile(dir=self.data_dir):

@@ -2,7 +2,7 @@
 
 依据：[PRD](../../docs/PRD.md)、[架构](../../docs/ARCHITECTURE.md)、[仓库约束](../../AGENTS.md)、[MVP1 用例](MVP1.md)。本清单检验 **SSE 事件恢复 + 隔离交互预览 + 生成应用的服务端数据持久化**，属于 ADR-004 之前的历史口径。MYATOM 建造工作台只验收桌面浏览器；生成应用是否适配手机按它自己的批准计划验收。
 
-**版本标记**：本清单的数据接口用例是此前 MVP2 实施的历史验收口径，已被生成交付物的 [ADR-004](../../docs/decisions/ADR-004-generated-deliverable-boundaries.md) 替代，不得用于宣称最新 `localStorage`、5 版回滚目标通过。新边界的验收点见 [PRD §7](../../docs/PRD.md#7-测试与-tc-维护)；实现变更时须同步重写本清单并实测。
+**版本标记**：本清单的数据接口与每项目独立 origin 用例是此前 MVP2 实施的历史验收口径，已被 [ADR-004](../../docs/decisions/ADR-004-generated-deliverable-boundaries.md) 和 [ADR-026](../../docs/decisions/ADR-026-shared-origin-project-storage.md) 替代，不得用于宣称最新 `localStorage`、共享预览或 5 版回滚目标通过。新边界见 [PRD §7](../../docs/PRD.md#7-测试与-tc-维护) 和 [共享预览 TC](SHARED-ORIGIN-PREVIEW.md)。
 
 ## 前置环境与记录格式
 

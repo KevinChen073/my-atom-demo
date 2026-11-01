@@ -16,7 +16,7 @@ from .model import BudgetExceeded, RunCancelled
 from .budget import effective_limits
 from .settings import Settings
 from .source_harness import (GENERATED_FILE, MAX_COMPONENTS, MAX_FILE_BYTES, MAX_GENERATED_BYTES,
-                             MAX_GENERATED_FILES, MAX_HOOKS, MAX_README_BYTES, REQUIRED_FILES,
+                             MAX_GENERATED_FILES, MAX_HOOKS, MAX_README_BYTES, REQUIRED_FILES, TEMPLATE_STORAGE_FILE,
                              source_violation_code)
 from .store import Store
 
@@ -37,6 +37,7 @@ UPDATER_SIDE_EFFECT = re.compile(
     r"\b(?:createRecord|updateRecord|deleteRecord|listRecords|persist\w*|save\w*|sync\w*|set[A-Z]\w*)\s*\("
 )
 STORAGE_ACCESS = re.compile(r"\blocalStorage\s*(?:\.|\[|[,;)])")
+DIRECT_STORAGE_ACCESS = re.compile(r"\b(?:localStorage|sessionStorage)\s*(?:\.|\[|[,;)])|\b(?:window|globalThis)\s*\.\s*localStorage\b|\bStorage\s*\.\s*prototype\b")
 
 
 class UnsafeSource(Exception):
@@ -71,11 +72,17 @@ class LocalRunner:
         if not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copytree(self.settings.template_dir, target, ignore=shutil.ignore_patterns("node_modules", "dist", "*.tsbuildinfo"))
+        template_storage = self.settings.template_dir / TEMPLATE_STORAGE_FILE
+        workspace_storage = target / TEMPLATE_STORAGE_FILE
+        storage_bytes = template_storage.read_bytes()
+        if not workspace_storage.exists() or workspace_storage.read_bytes() != storage_bytes:
+            workspace_storage.parent.mkdir(parents=True, exist_ok=True)
+            workspace_storage.write_bytes(storage_bytes)
         return target
 
     def validate_source(self, name: str, content: str, names: set[str] | None = None) -> None:
         names = names or REQUIRED_FILES
-        if not GENERATED_FILE.fullmatch(name) or not isinstance(content, str) or not content.strip() or len(content.encode("utf-8")) > MAX_FILE_BYTES:
+        if name == TEMPLATE_STORAGE_FILE or not GENERATED_FILE.fullmatch(name) or not isinstance(content, str) or not content.strip() or len(content.encode("utf-8")) > MAX_FILE_BYTES:
             raise UnsafeSource("生成文件不在允许范围内或内容无效")
         if name == "readme.md":
             if len(content.encode("utf-8")) > MAX_README_BYTES:
@@ -85,6 +92,8 @@ class LocalRunner:
         if forbidden:
             raise UnsafeSource(f"生成代码包含 MVP1 不允许的能力：{forbidden.group(0)}")
         if name.endswith((".tsx", ".ts")):
+            if DIRECT_STORAGE_ACCESS.search(content):
+                raise UnsafeSource("生成源码必须通过项目存储适配器读写，不得直接访问浏览器存储")
             imports = IMPORT_LINE.findall(content)
             for module in imports:
                 if module == "react":
@@ -92,7 +101,7 @@ class LocalRunner:
                 if not module.startswith("."):
                     raise UnsafeSource("生成代码只能导入 React 和已生成的项目文件")
                 target = posixpath.normpath(posixpath.join(posixpath.dirname(name), module))
-                if target not in names and not any(target + ext in names for ext in (".ts", ".tsx", ".css")):
+                if target not in names and not any(target + ext in names | {TEMPLATE_STORAGE_FILE} for ext in (".ts", ".tsx", ".css")):
                     raise UnsafeSource(f"导入未生成的项目文件：{module}")
             if name == "src/App.tsx" and "export default" not in content:
                 raise UnsafeSource("缺少默认导出的 React 组件")
@@ -114,7 +123,7 @@ class LocalRunner:
 
         for name in sorted(REQUIRED_FILES - names):
             add("invalid_layout", name, f"生成文件缺少必需的 {name}")
-        if (len(names) > MAX_GENERATED_FILES or
+        if (TEMPLATE_STORAGE_FILE in names or len(names) > MAX_GENERATED_FILES or
             sum(len(content.encode("utf-8")) for content in files.values() if isinstance(content, str)) > MAX_GENERATED_BYTES or
             any(not isinstance(name, str) or not GENERATED_FILE.fullmatch(name) for name in names)):
             add("invalid_layout", None, "生成文件不在允许范围内或数量/大小超过上限")
@@ -148,7 +157,7 @@ class LocalRunner:
         for folder in (root / "src" / "hooks", root / "src" / "components"):
             if folder.exists():
                 for previous_file in folder.iterdir():
-                    if previous_file.is_file() and previous_file.relative_to(root).as_posix() not in names:
+                    if previous_file.is_file() and previous_file.relative_to(root).as_posix() not in names | {TEMPLATE_STORAGE_FILE}:
                         previous_file.unlink()
         written: list[dict[str, Any]] = []
         for name in sorted(files):
@@ -255,7 +264,7 @@ class LocalRunner:
             elif name != "build.log":
                 files.append(entry)
         return {"digest": digest, "manifest": {"files": files, "build_files": built,
-                "build": {"ok": build["ok"], "steps": build["steps"]}, "template": "react-vite-v3",
+                "build": {"ok": build["ok"], "steps": build["steps"]}, "template": "react-vite-v4",
                 "preview": {"status": "candidate"}}}
 
     def probe_candidate(self, project_id: str, run_id: str, digest: str) -> dict[str, Any]:
