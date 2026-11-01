@@ -1,6 +1,6 @@
 # Azure 受信演示环境：Azure SQL 保存平台状态与版本文本
 
-数据库决定见 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md)，版本文本存储设计见 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md)，同容器受信执行边界见 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)。产品边界见 [PRD](PRD.md)，验收见 [Azure TC](../tests/cases/DEPLOYMENT-AZURE.md)。本地与 Azure 是独立数据环境；Azure 从专用空库与空容器目录开始，**不搬迁本地历史项目、checkpoint、版本或文件**。schema v2 与版本文件读写已在本仓接线；尚未发布镜像或在 Azure 实测。
+数据库决定见 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md)，版本文本存储设计见 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md)，同容器受信执行边界见 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)。产品边界见 [PRD](PRD.md)，验收见 [Azure TC](../tests/cases/DEPLOYMENT-AZURE.md)。本地与 Azure 是独立数据环境；Azure 从专用空库与空容器目录开始，**不搬迁本地历史项目、checkpoint、版本或文件**。schema v2 与版本文件读写已在本仓接线；用户确认 Azure SQL 已迁移 v2，镜像已在 Azure 健康模式运行。容器到 SQL 的连接因服务器防火墙拒绝而尚未通过；详见 [部署记录](AZURE-SMOKE-DEPLOY-2026-11-01.md)。
 
 | 数据 | 本地 | Azure 受信演示 |
 | --- | --- | --- |
@@ -25,8 +25,8 @@
 1. 在 `my-atom-dev` 查询编辑器只读核对 `sys.database_principals`，确认容器身份已存在且有预期角色；不要把门户登录成功当成容器连接成功。当前本轮门户查询编辑器的 `QueryEditor.ReactView` 加载失败，因此授权状态仍以用户报告为准。
 2. 由数据库管理员在**专用测试库**执行 `backend/sql/azure_sql_v1.sql`、`backend/sql/azure_sql_v2.sql`，分别按 `GO` 分批；迁移前核对库为空，迁移后查 `SELECT MAX(version) FROM dbo.myatom_schema_version` 应为 `2`。`myatom-azure-check` 运行身份只有读写权限，不能以它执行 DDL。若 v1 库已有版本记录，先停止并做受控文件导入，不能直接运行 v2。
    若执行旧 v1 在 `checkpoint VARBINARY(MAX)` 处报语法错误，使用本仓已改为 `[checkpoint]` 的 v1 文件重新执行，勿手工删表。v1 各建表/索引语句按存在性检查设计，可在同一专用库上续跑；先核对 `SELECT MAX(version) FROM dbo.myatom_schema_version`，确认 v1 标记成功后再执行 v2。Python 自动迁移器会拒绝接管“已有部分表但没有版本标记”的库，此时应由管理员核对并续跑 v1，而不是清空已有数据。
-3. 发布包含本仓 Azure SQL 代码的**新镜像**并建立新修订后，在该容器中执行 `python -m backend.azure_sql_probe`。期望输出 `database=my-atom-dev`、`user=myatom-azure-check`、`schema_version=2`。现有公开镜像仍是健康检查旧版，不可用于这一步。
-4. 再启动 `APP_ENV=azure_demo`，创建一个小应用，记录 `version_id`，替换容器副本并确认代码、预览、回滚与 checkpoint 均仍可读。真实结果按 [Azure TC](../tests/cases/DEPLOYMENT-AZURE.md)记录。新镜像发布和 Azure 运行仍未执行。
+3. 已发布包含 Azure SQL 代码的新镜像，并在新修订内执行 `python -m backend.azure_sql_probe`；当前 SQL 防火墙拒绝容器出口 IP，因此仍需核对网络规则后重试。期望输出 `database=my-atom-dev`、`user=myatom-azure-check`、`schema_version=2`。
+4. 在独立 HTTPS 预览域和受信入口限制就绪后，启动 `APP_ENV=azure_demo`，创建一个小应用，记录 `version_id`，替换容器副本并确认代码、预览、回滚与 checkpoint 均仍可读。真实结果按 [Azure TC](../tests/cases/DEPLOYMENT-AZURE.md)记录；目前尚未执行完整应用验收。
 
 ## 文件与版本顺序
 

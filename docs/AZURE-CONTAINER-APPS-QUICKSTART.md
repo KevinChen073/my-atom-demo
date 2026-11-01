@@ -11,7 +11,7 @@
 
 ## 0. MYATOM 当前状态与“成功”含义
 
-本仓库的部署准备分支是 `deploy/azure-preparation`；历史 [PostgreSQL 工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41298422585)与[镜像工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41298422604)只验证旧候选。新的 [镜像发布工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41307852684)已构建并发布 GHCR 镜像，且 Azure Container App 已运行其 `container_smoke` 模式；详见[实测记录](AZURE-SMOKE-DEPLOY-2026-11-01.md)。用户提供资源组 `rg-myatom-quickstart`、Azure SQL Server `my-atom.database.windows.net`；`my-atom-dev` 曾只读核对为空库，数据库 SKU 和账单尚未核实。本机尚无 Docker/Azure CLI，完整 MYATOM 在真实 Azure 环境未验证。当前目标以 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)、[ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 和 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 为准：复用现有 Azure SQL 持久保存平台状态与版本文本，容器 `data/` 只作临时构建，**仅限受信人员**。SQL 文件读写已在本仓接线，尚未迁移测试库、发布新镜像或在 Azure 验收。`az containerapp up --repo` 只读取 GitHub 已提交分支，且可能创建云资源；不能代替访问限制及预览域验收。
+本仓库的部署准备分支是 `deploy/azure-preparation`；[当前镜像工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41316205814)已构建并发布 GHCR 镜像，Azure Container App 已运行 `container_smoke` 模式，详见[实测记录](AZURE-SMOKE-DEPLOY-2026-11-01.md)。资源组为 `rg-myatom-quickstart`，Azure SQL Server 为 `my-atom.database.windows.net`。用户确认 `my-atom-dev` 已迁移到 schema v2，门户只读查询返回 v2；容器连接仍被 SQL 防火墙拒绝。数据库采用免费无服务器层，自动暂停延迟 1 小时；实际使用量和后续账单仍须在 Azure 核对。本机尚无 Docker/Azure CLI，完整 MYATOM 在真实 Azure 环境未验证。当前目标以 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)、[ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 和 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 为准：复用现有 Azure SQL 持久保存平台状态与版本文本，容器 `data/` 只作临时构建，**仅限受信人员**。`az containerapp up --repo` 只读取 GitHub 已提交分支，且可能创建云资源；不能代替访问限制及预览域验收。
 
 | 里程碑 | 可说明什么 | 不能说明什么 |
 | --- | --- | --- |
@@ -86,7 +86,7 @@ docker build -t myatom-api-smoke .
 docker run --rm -p 127.0.0.1:18000:8000 myatom-api-smoke
 ```
 
-另开终端访问 `http://127.0.0.1:18000/api/health`，预期 HTTP 200；访问 `http://127.0.0.1:18000/`，预期 HTTP 503。然后停止容器，确认进程退出。503 是 `container_smoke` 有意封闭应用功能的结果；只有 Azure SQL、HTTPS 预览域和受信入口限制实测后，才可开放受信演示。固定标签镜像已由 [GitHub 工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41307852684)构建并在 Azure 健康冒烟通过；本机缺少 Docker，`azure_demo` 与容器重启对账尚未实测。
+另开终端访问 `http://127.0.0.1:18000/api/health`，预期 HTTP 200；访问 `http://127.0.0.1:18000/`，预期 HTTP 503。然后停止容器，确认进程退出。503 是 `container_smoke` 有意封闭应用功能的结果；只有 Azure SQL、HTTPS 预览域和受信入口限制实测后，才可开放受信演示。固定标签镜像已由 [GitHub 工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41316205814)构建并在 Azure 健康冒烟通过；本机缺少 Docker，`azure_demo` 与容器重启对账尚未实测。
 
 ### 3.2 准备完成后的 GitHub 自动部署命令模板
 
@@ -122,4 +122,4 @@ az containerapp up `
 
 ## 本文未验证的边界
 
-这份指南核对了 Azure 官方操作步骤与当前仓库结构；GitHub 准备分支已推送，复用现有 Azure 容器应用完成旧镜像启动冒烟，未创建额外云资源。本机未检测到 Azure CLI。用户报告已配置容器数据库连接串；本轮未独立核对该配置。受信演示交付仍依赖 schema v2 实际迁移、新镜像发布、§3.1 的访问限制、域名和真实环境验收；GitHub 到 Azure 的自动更新尚未配置。
+这份指南核对了 Azure 官方操作步骤与当前仓库结构；GitHub 准备分支已推送，复用现有 Azure 容器应用完成新镜像启动冒烟，未创建额外云资源。本机未检测到 Azure CLI。容器已配置托管身份 Azure SQL 连接串，schema v2 已由用户确认并经门户只读查询核对；容器连接暂被 SQL 防火墙阻断。受信演示交付仍依赖容器 SQL 读写、§3.1 的访问限制、独立 HTTPS 预览域和真实环境验收；GitHub 到 Azure 的自动更新尚未配置。
