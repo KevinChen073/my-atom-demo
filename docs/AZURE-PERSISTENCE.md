@@ -42,7 +42,7 @@
 
 本机 Windows 的 `mssql-python` 在 `Authentication=ActiveDirectoryInteractive` 下会走 ODBC 交互登录。明确 `UID` 后仍出现 `FA004 / 0x534 / state 11`；改用 `ActiveDirectoryDeviceCode` 时，登录应用以 `AADSTS500200` 拒绝当前个人 Microsoft 账号。租户用户资料显示该账号是 B2B 外部身份，虽然门户查询编辑器能以该账号连接，驱动使用的登录应用仍不能完成认证。因此本机直连写入测试暂时 **Blocked**；不要继续重试个人账号设备码，也不要把此问题当作 SQL schema/权限失败。[微软 ODBC 交互登录说明](https://learn.microsoft.com/en-us/sql/connect/odbc/using-azure-active-directory)、[微软 Entra 错误码](https://learn.microsoft.com/en-us/entra/identity-platform/reference-error-codes)。
 
-Azure Container App `myatom-azure-check` 的系统分配托管身份已启用。用户报告已在 `my-atom-dev` 授予该身份数据库读写权限；容器连接串使用 `Authentication=ActiveDirectoryMSI`。当前新镜像已在 `container_smoke` 健康模式启动，但容器内只读探针遭 SQL 防火墙拒绝，故托管身份实际数据库授权、读写和重启恢复仍未验证；用户选择暂不修改防火墙。不能以健康检查声称 SQL 已联通。本机直连用例若仍需运行，则须改用该租户可登录的组织账号。[Container Apps 托管身份](https://learn.microsoft.com/en-us/azure/container-apps/managed-identity)、[Azure SQL 创建 Entra 用户](https://learn.microsoft.com/en-us/azure/azure-sql/database/authentication-aad-configure)。
+Azure Container App `myatom-azure-check` 的系统分配托管身份已启用；容器连接串使用 `Authentication=ActiveDirectoryMSI`。在 `azure_demo` 模式下，在线创建项目后通过详情与列表接口读回，确认该身份可执行至少这组数据库写读操作。Azure SQL 防火墙规则当前仅允许容器的单个出口 IP；出口 IP 变化会再次阻断连接。交付物版本文件读写、容器重建后恢复与异常后台只读授权尚未在线验证。本机直连用例若仍需运行，则须改用该租户可登录的组织账号。[实测记录](AZURE-SMOKE-DEPLOY-2026-11-01.md)、[Container Apps 托管身份](https://learn.microsoft.com/en-us/azure/container-apps/managed-identity)、[Azure SQL 创建 Entra 用户](https://learn.microsoft.com/en-us/azure/azure-sql/database/authentication-aad-configure)。
 
 ## 证据与待验
 

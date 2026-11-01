@@ -1,6 +1,6 @@
 # MYATOM：从 GitHub 到 Azure Container Apps 快速操作指南
 
-状态：操作文档，2026-11-01；**镜像构建、GHCR 发布和 Azure 容器启动冒烟已实测通过，完整 MYATOM 尚未在 Azure 运行**。实际证据与配置见 [Azure 容器冒烟记录](AZURE-SMOKE-DEPLOY-2026-11-01.md)。本指南说明如何核对现有 Azure 测试应用，再把 MYATOM 部署到 Azure。产品验收以 [PRD](PRD.md)、[架构](ARCHITECTURE.md) 和 [部署 TC](../tests/cases/DEPLOYMENT-AZURE.md) 为准；路线决定见 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md)。后续云资源创建、GitHub 推送和正式发布按根目录工作约束执行。
+状态：操作文档，2026-11-01；**完整工作台已部署到受信 IP 范围，首页和 Azure SQL 项目读写冒烟通过；真实模型生成、预览与重启恢复尚未在线验证。** 实际证据与配置见 [Azure 部署记录](AZURE-SMOKE-DEPLOY-2026-11-01.md)。产品验收以 [PRD](PRD.md)、[架构](ARCHITECTURE.md) 和 [部署 TC](../tests/cases/DEPLOYMENT-AZURE.md) 为准；路线决定见 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md)。
 
 ## 先看官方入口
 
@@ -11,7 +11,7 @@
 
 ## 0. MYATOM 当前状态与“成功”含义
 
-本仓库的部署准备分支是 `deploy/azure-preparation`；[当前镜像工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41316205814)已构建并发布 GHCR 镜像，Azure Container App 已运行 `container_smoke` 模式，详见[实测记录](AZURE-SMOKE-DEPLOY-2026-11-01.md)。资源组为 `rg-myatom-quickstart`，Azure SQL Server 为 `my-atom.database.windows.net`。用户确认 `my-atom-dev` 已迁移到 schema v2，门户只读查询返回 v2；容器连接仍被 SQL 防火墙拒绝。数据库采用免费无服务器层，自动暂停延迟 1 小时；实际使用量和后续账单仍须在 Azure 核对。本机尚无 Docker/Azure CLI，完整 MYATOM 在真实 Azure 环境未验证。当前目标以 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)、[ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 和 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 为准：复用现有 Azure SQL 持久保存平台状态与版本文本，容器 `data/` 只作临时构建，**仅限受信人员**。`az containerapp up --repo` 只读取 GitHub 已提交分支，且可能创建云资源；不能代替访问限制及预览域验收。
+本仓库的部署分支是 `deploy/azure-preparation`；[当前镜像工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41322698049)已构建并发布 GHCR 镜像，Azure Container App 运行 `azure_demo` 模式，详见[实测记录](AZURE-SMOKE-DEPLOY-2026-11-01.md)。资源组为 `rg-myatom-quickstart`，Azure SQL Server 为 `my-atom.database.windows.net`，数据库为 `my-atom-dev`（schema v2）。容器托管身份已通过应用接口完成项目创建与读回。数据库采用免费无服务器层，实际使用量和后续账单仍须在 Azure 核对。本机尚无 Docker/Azure CLI。当前目标以 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)、[ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 和 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 为准：Azure SQL 持久保存平台状态与版本文本，容器 `data/` 只作临时构建，**仅限受信人员**。
 
 | 里程碑 | 可说明什么 | 不能说明什么 |
 | --- | --- | --- |
@@ -71,7 +71,7 @@ az containerapp up `
 | 预览与入口 | 本地同源 `/preview/...` 路由、票据与项目 ID 注入定向测试通过 | Azure 默认 HTTPS FQDN 同 origin 的 `/preview/...` 路径与 `myatom.app.<项目 UUID>.*` 存储前缀；需在线验证票据/刷新读回及入口认证/IP 允许列表。前缀不构成安全隔离，详见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) |
 | 模型与密钥 | 工作台可输入 DeepSeek / OpenAI 兼容 API Key，本地 `.env` 可预填 | Azure 用户 Key 仅留在当前页面会话内存，刷新后重填；本地可保存到浏览器，见 [ADR-025](decisions/ADR-025-browser-model-settings.md)。主 API 不持久保存 Key；真实模型测试需用户提供测试 Key |
 
-上述条件不满足时，最多部署一个**受限测试容器**验证启动。目标受信演示配置为 `APP_ENV=azure_demo`、`MYATOM_TRUSTED_DEMO=1`、`MYATOM_AZURE_SQL_CONNECTION_STRING`、`WORKBENCH_ORIGIN`（可用 Container Apps 默认 HTTPS FQDN）、`MYATOM_DATA_DIR=/app/data`；不需要 `PREVIEW_BASE_DOMAIN`。同源路由已在代码实现，本地定向测试通过，Azure 在线功能仍待验证。用户在工作台填写模型 Key，服务器 `MODEL_API_KEY` 可不设置；Azure 页面不持久保存 Key，但同源运行时仍有风险，见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md)。Azure SQL 连接必须加密并验证证书，不设置 `MYATOM_DATABASE_URL`。目录不可写或域名配置不合规时启动会失败。访问限制必须先在 Container Apps ingress 层配置并实测。实际访问参数和凭证不写进仓库。
+受信演示配置为 `APP_ENV=azure_demo`、`MYATOM_TRUSTED_DEMO=1`、`MYATOM_AZURE_SQL_CONNECTION_STRING`、`WORKBENCH_ORIGIN`（Container Apps 默认 HTTPS FQDN）、`MYATOM_DATA_DIR=/app/data`；不需要 `PREVIEW_BASE_DOMAIN`。同源路由本地定向测试通过，Azure 首页已打开，真实产物预览仍待验证。用户在工作台填写模型 Key，服务器 `MODEL_API_KEY` 不设置；Azure 页面刷新后清除 Key，同源运行时风险见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md)。Azure SQL 连接加密并验证证书，不设置 `MYATOM_DATABASE_URL`。入口 IP 允许列表已配置，但从非允许 IP 的拒绝响应尚未实测。实际访问参数和凭证不写进仓库。
 
 ### 3.1.1 容器临时工作区与运行参数
 
@@ -122,4 +122,4 @@ az containerapp up `
 
 ## 本文未验证的边界
 
-这份指南核对了 Azure 官方操作步骤与当前仓库结构；GitHub 准备分支已推送，复用现有 Azure 容器应用完成新镜像启动冒烟，未创建额外云资源。本机未检测到 Azure CLI。容器已配置托管身份 Azure SQL 连接串，schema v2 已由用户确认并经门户只读查询核对；容器连接暂被 SQL 防火墙阻断，用户选择暂不修改防火墙。受信演示交付仍依赖容器 SQL 读写、§3.1 的访问限制、共享路径预览迁移、模型 Key 风险处理和真实环境验收；GitHub 到 Azure 的自动更新尚未配置。
+这份指南核对了 Azure 官方操作步骤与当前仓库结构；GitHub 部署分支已推送，复用现有 Azure 容器应用，没有创建额外云资源。本机未检测到 Azure CLI。容器托管身份 Azure SQL 连接已通过在线项目创建与读回冒烟。未验证的仍有容器替换后读回、交付物版本文件、真实模型生成与预览、从未授权 IP 拒绝请求、独立异常后台；GitHub 到 Azure 的自动更新尚未配置。单 IP SQL 防火墙规则会随容器出口 IP 变化而失效。
