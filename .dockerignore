@@ -21,5 +21,4 @@ tests/
 ops/
 ops-web/
 docs/
-design/
 *.log

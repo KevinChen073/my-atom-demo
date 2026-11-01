@@ -6,6 +6,7 @@ COPY web/package.json web/package-lock.json ./
 RUN npm ci --no-audit --no-fund
 COPY web/ ./
 COPY examples/ ../examples/
+COPY design/v3/icons/ ../design/v3/icons/
 RUN npm run build
 
 FROM python:3.11-slim AS api
