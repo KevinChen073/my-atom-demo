@@ -8,6 +8,7 @@ import secrets
 import uuid
 import ipaddress
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from typing import Any, Literal
 
 from fastapi import FastAPI, Header, HTTPException, Request, Response
@@ -76,6 +77,10 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     settings = settings or Settings()
     if settings.app_env not in {"local", "container_smoke", "azure_demo"}:
         raise RuntimeError("不支持的运行环境")
+    if settings.app_env == "container_smoke":
+        # Health-only mode must boot even when the container already has its
+        # future Azure SQL configuration. It never opens that database.
+        settings = replace(settings, azure_sql_connection_string="", database_url="")
     settings.validate_azure_demo()
     if settings.azure_sql_connection_string:
         if settings.app_env not in {"local", "azure_demo"}:

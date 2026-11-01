@@ -8,6 +8,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend import azure_demo
+from backend.api import create_app
 from backend.preview_access import preview_host, preview_origin
 from backend.runner import LocalRunner
 from backend.settings import Settings
@@ -25,6 +26,14 @@ def _settings(tmp_path: Path, **changes) -> Settings:
 def test_azure_demo_accepts_local_container_data_without_mount(tmp_path: Path):
     _settings(tmp_path).validate_azure_demo()
     assert tmp_path.is_dir()
+
+
+def test_container_smoke_ignores_staged_azure_sql_connection(tmp_path: Path):
+    settings = Settings(data_dir=tmp_path, app_env="container_smoke",
+                        azure_sql_connection_string="Server=unreachable;Database=staged")
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/api/health").json()["app_env"] == "container_smoke"
+        assert client.get("/").status_code == 503
 
 
 def test_azure_demo_rejects_invalid_config(tmp_path: Path):
