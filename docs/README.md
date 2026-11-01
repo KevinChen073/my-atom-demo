@@ -24,6 +24,8 @@
 | [ADR-012](decisions/ADR-012-user-facing-run-progress.md) | 长任务按真实节点更新进展、执行计时与完成后折叠 |
 | [ADR-013](decisions/ADR-013-source-validation-targeted-repair.md) | 源码校验回路、按文件定向重生与共享修复预算 |
 | [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md) | 已选定 GitHub → Azure 公开交付路线，生产适配仍待验收 |
+| [ADR-017](decisions/ADR-017-azure-persistent-state-and-artifacts.md) | Azure PostgreSQL 平台状态与 Blob 交付文件的持久化决定 |
+| [Azure 持久化实施与迁移](AZURE-PERSISTENCE.md) | 数据归属、迁移顺序、故障对账与未验证边界 |
 | [ADR-016](decisions/ADR-016-build-check-observability-and-recovery.md) | 构建检查逐轮打点、独立异常中心展示与模型输出失败后的显式恢复 |
 | [Azure 部署验收](../tests/cases/DEPLOYMENT-AZURE.md) | 源码、容器、持久状态、隔离运行、预览及公开端到端闸门 |
 | [单一发送 TC](../tests/cases/SINGLE-SEND.md) | 消息、并发、恢复与交互验收 |

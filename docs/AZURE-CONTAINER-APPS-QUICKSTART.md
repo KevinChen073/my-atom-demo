@@ -66,7 +66,7 @@ az containerapp up `
 | --- | --- | --- |
 | GitHub 源码 | 本地有未提交工作；未建立部署分支。根目录 Dockerfile 与 `.dockerignore` 已准备，但本机无 Docker，尚未构建镜像 | 核对本地改动，建立受控部署分支，提交/推送经确认的代码；实测根目录 Dockerfile 构建 `web/dist` 和 Python 依赖、启动主 API 监听 `0.0.0.0:8000` 并暴露 8000；不把 `.env`、`data/`、密钥推送到 GitHub |
 | Python 服务入口 | `backend/serve.py` 明确只允许 `APP_ENV=local`，主 API 在 `backend/api.py` | 生产入口使用受支持的 ASGI 启动方式；区分测试/生产环境，容器启动、健康检查与关停行为通过测试 |
-| 平台状态 | 项目/事件/checkpoint/预览票据使用本机 SQLite；构建产物在 `data/` | 接持久数据库与产物存储，完成 schema 迁移、重启读回、独立异常后台只读访问；不把容器临时盘当作权威数据源 |
+| 平台状态 | 项目/事件/checkpoint/预览票据使用本机 SQLite；构建产物在 `data/` | 按 [ADR-017](decisions/ADR-017-azure-persistent-state-and-artifacts.md) 接 PostgreSQL 与私有 Blob，完成 schema/文件迁移、重启读回、独立异常后台只读访问；不把容器临时盘当作权威数据源，也不把 SQLite WAL 放到网络挂载 |
 | Runner/预览 | `backend/preview.py` 只允许本地环境和 `.localhost` 项目子域；本地跨站 iframe 现用一次性票据兑换受限会话路径 | 独立隔离 Runner、HTTPS 稳定项目预览 origin、生产会话机制与跨项目隔离通过 `TC-SEC-01`；不能把主 API 容器内直接执行生成代码视为安全隔离，也不能把本地路径令牌方案直接当作公网设计 |
 | 模型与密钥 | 当前本地 `.env`；拟支持 DeepSeek 与 OpenAI 兼容 API | 服务端密钥和预算配置；用户输入 Key 不进入前端持久存储、仓库、日志或预览代码；真实模型测试需用户提供测试 Key |
 
