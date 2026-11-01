@@ -25,20 +25,24 @@ def migrate(connection_string: str) -> None:
         else:
             cursor.execute("SELECT MAX(version) FROM dbo.myatom_schema_version")
             version = cursor.fetchone()[0]
-            if version not in {1, 2}:
+            if version not in {1, 2, 3}:
                 raise RuntimeError("不支持的 Azure SQL schema 版本")
         if version == 1:
             cursor.execute("SELECT COUNT(*) FROM dbo.versions")
             if cursor.fetchone()[0]:
                 raise RuntimeError("schema v1 已有版本记录，必须先受控导入文件，拒绝生成空文件的可用版本")
-        for number in range(version + 1, 3):
+        for number in range(version + 1, 4):
             script = (sql_dir / f"azure_sql_v{number}.sql").read_text(encoding="utf-8")
             for batch in (part.strip() for part in re.split(r"(?im)^GO\s*$", script)):
                 if batch:
                     cursor.execute(batch)
         cursor.execute("SELECT MAX(version) FROM dbo.myatom_schema_version")
-        if cursor.fetchone()[0] != 2:
+        if cursor.fetchone()[0] != 3:
             raise RuntimeError("Azure SQL schema 迁移未完成")
+        cursor.execute("SELECT collation_name FROM sys.columns "
+                       "WHERE object_id=OBJECT_ID(N'dbo.version_files') AND name=N'relative_path'")
+        if cursor.fetchone()[0] != "Latin1_General_100_BIN2":
+            raise RuntimeError("Azure SQL 版本文件路径排序规则未迁移")
 
 
 if __name__ == "__main__":

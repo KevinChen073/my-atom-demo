@@ -14,6 +14,10 @@ MAX_VERSION_BYTES = 2 * 1024 * 1024
 TEXT_EXTENSIONS = {".tsx", ".ts", ".js", ".css", ".html", ".json", ".md", ".svg", ".txt"}
 
 
+class VersionCommitError(RuntimeError):
+    """A candidate passed checks, but its database snapshot could not be committed."""
+
+
 def valid_snapshot_path(name: str) -> bool:
     if not isinstance(name, str) or not name or len(name) > 400 or "\\" in name or ":" in name or name.startswith("/"):
         return False

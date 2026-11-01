@@ -8,6 +8,7 @@ from typing import Iterator
 
 from .model import BudgetExceeded, ModelOutputError
 from .runner import UnsafeSource
+from .azure_artifacts import VersionCommitError
 from .source_harness import source_validation_reason
 
 
@@ -22,6 +23,7 @@ REASONS = {
     "build_recurring_error": "同一种构建错误累计出现第 5 次，自动源码修复已停止。",
     "build_repair_limit": "已达到 60 轮自动源码修复上限，构建仍未通过。",
     "preview_failed": "生成应用的预览检查未通过。",
+    "version_commit_failed": "版本保存失败：数据库约束拒绝候选文件，写入已回滚。",
     "budget_exceeded": "本次任务达到调用、用量或时间预算上限。",
     "unsafe_source": "生成源码未通过安全检查，任务已停止。",
     "agent_unhandled": "任务执行时发生未预期异常。",
@@ -94,6 +96,9 @@ def classify(exc: BaseException) -> tuple[str, str]:
     if any(isinstance(item, PlanValidationError) for item in chain):
         code = "plan_validation_failed"
         kind = "PlanValidationError"
+    elif any(isinstance(item, VersionCommitError) for item in chain):
+        code = "version_commit_failed"
+        kind = "VersionCommitError"
     elif any(isinstance(item, ModelOutputError) for item in chain):
         code = "model_output_invalid"
         kind = "ModelOutputError"

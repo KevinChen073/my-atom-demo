@@ -13,7 +13,7 @@ import uuid
 from contextlib import contextmanager
 from typing import Any, Iterator
 
-from .azure_artifacts import valid_snapshot_path, validate_snapshot_files, verify_stored_file
+from .azure_artifacts import VersionCommitError, valid_snapshot_path, validate_snapshot_files, verify_stored_file
 from .store import Conflict, NotFound, Store, dumps, now
 
 
@@ -133,8 +133,12 @@ class AzureSqlStore(Store):
         self.lock = threading.RLock()
         with self._conn() as db:
             version = db.execute("SELECT MAX(version) FROM myatom_schema_version").fetchone()
-            if version is None or version[0] != 2:
+            if version is None or version[0] != 3:
                 raise RuntimeError("Azure SQL schema 尚未迁移，请先执行 backend.migrate_azure_sql")
+            collation = db.execute("SELECT collation_name FROM sys.columns "
+                                   "WHERE object_id=OBJECT_ID(N'dbo.version_files') AND name=N'relative_path'").fetchone()
+            if collation is None or collation[0] != "Latin1_General_100_BIN2":
+                raise RuntimeError("Azure SQL 版本文件路径排序规则未迁移")
 
     def _conn(self):
         return azure_sql_connection(self.connection_string)
@@ -166,33 +170,38 @@ class AzureSqlStore(Store):
     def commit_version_with_files(self, project_id: str, run_id: str, manifest: dict[str, Any],
                                   files: list[dict[str, Any]]) -> tuple[dict[str, Any], list[str]]:
         """Publish version metadata, file text, pointer, and five-version trim atomically."""
+        from mssql_python.exceptions import IntegrityError
+
         validate_snapshot_files(manifest, files)
         removed_runs: list[str] = []
-        with self.lock, self._conn() as db:
-            self._lock_project(db, project_id)
-            existing = db.execute("SELECT * FROM versions WHERE run_id=?", (run_id,)).fetchone()
-            if existing:
-                return self._dict(existing), removed_runs
-            run = db.execute("SELECT base_version_id FROM runs WHERE id=? AND project_id=?", (run_id, project_id)).fetchone()
-            current = db.execute("SELECT active_version_id FROM projects WHERE id=?", (project_id,)).fetchone()
-            if not run or not current or run["base_version_id"] != current["active_version_id"]:
-                raise Conflict("当前版本已变化，请以最新版本开始新一轮")
-            version_id = str(uuid.uuid4())
-            db.execute("INSERT INTO versions (id, project_id, run_id, manifest_json, created_at) VALUES (?,?,?,?,?)",
-                       (version_id, project_id, run_id, dumps(manifest), now()))
-            for row in files:
-                db.execute("INSERT INTO version_files (version_id, relative_path, text_content, utf8_bytes, sha256, kind, mime_type) "
-                           "VALUES (?,?,?,?,?,?,?)", (version_id, row["path"], row["content"], row["utf8_bytes"],
-                                                       row["sha256"], row["kind"], row["mime_type"]))
-            db.execute("UPDATE runs SET version_id=?, updated_at=? WHERE id=?", (version_id, now(), run_id))
-            db.execute("UPDATE projects SET active_version_id=?, updated_at=? WHERE id=?", (version_id, now(), project_id))
-            versions = db.execute("SELECT id, run_id FROM versions WHERE project_id=? ORDER BY ordinal", (project_id,)).fetchall()
-            for old in versions[:max(0, len(versions) - 5)]:
-                if old["id"] == version_id:
-                    continue
-                db.execute("DELETE FROM versions WHERE id=?", (old["id"],))
-                removed_runs.append(old["run_id"])
-            self._append_event(db, run_id, "version_saved", {"version_id": version_id, "files": manifest["files"]})
+        try:
+            with self.lock, self._conn() as db:
+                self._lock_project(db, project_id)
+                existing = db.execute("SELECT * FROM versions WHERE run_id=?", (run_id,)).fetchone()
+                if existing:
+                    return self._dict(existing), removed_runs
+                run = db.execute("SELECT base_version_id FROM runs WHERE id=? AND project_id=?", (run_id, project_id)).fetchone()
+                current = db.execute("SELECT active_version_id FROM projects WHERE id=?", (project_id,)).fetchone()
+                if not run or not current or run["base_version_id"] != current["active_version_id"]:
+                    raise Conflict("当前版本已变化，请以最新版本开始新一轮")
+                version_id = str(uuid.uuid4())
+                db.execute("INSERT INTO versions (id, project_id, run_id, manifest_json, created_at) VALUES (?,?,?,?,?)",
+                           (version_id, project_id, run_id, dumps(manifest), now()))
+                for row in files:
+                    db.execute("INSERT INTO version_files (version_id, relative_path, text_content, utf8_bytes, sha256, kind, mime_type) "
+                               "VALUES (?,?,?,?,?,?,?)", (version_id, row["path"], row["content"], row["utf8_bytes"],
+                                                           row["sha256"], row["kind"], row["mime_type"]))
+                db.execute("UPDATE runs SET version_id=?, updated_at=? WHERE id=?", (version_id, now(), run_id))
+                db.execute("UPDATE projects SET active_version_id=?, updated_at=? WHERE id=?", (version_id, now(), project_id))
+                versions = db.execute("SELECT id, run_id FROM versions WHERE project_id=? ORDER BY ordinal", (project_id,)).fetchall()
+                for old in versions[:max(0, len(versions) - 5)]:
+                    if old["id"] == version_id:
+                        continue
+                    db.execute("DELETE FROM versions WHERE id=?", (old["id"],))
+                    removed_runs.append(old["run_id"])
+                self._append_event(db, run_id, "version_saved", {"version_id": version_id, "files": manifest["files"]})
+        except IntegrityError as exc:
+            raise VersionCommitError("版本保存失败：数据库约束拒绝候选文件，写入已回滚。") from exc
         return self.get_version(version_id), removed_runs
 
     def get_version_file(self, version_id: str, name: str) -> tuple[str, str]:

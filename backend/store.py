@@ -193,7 +193,7 @@ class Store:
         from .budget import budget_reason
         from .exceptions import MODEL_OUTPUT_REASONS, PLAN_VALIDATION_REASONS, REASONS, safe_phase, source_validation_reason
 
-        allowed = {"agent": {"model_output_invalid", "model_call_failed", "plan_validation_failed", "budget_exceeded", "unsafe_source", "agent_unhandled", "preview_failed"},
+        allowed = {"agent": {"model_output_invalid", "model_call_failed", "plan_validation_failed", "budget_exceeded", "unsafe_source", "agent_unhandled", "preview_failed", "version_commit_failed"},
                    "build": {"build_failed", "build_no_progress", "build_recurring_error", "build_repair_limit"},
                    "api": {"api_unhandled"}}
         if code not in allowed.get(source, set()):

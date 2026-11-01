@@ -84,9 +84,12 @@ def test_azure_sql_restart_checkpoint_events_versions_and_preview(
     (root / "dist").mkdir(parents=True)
     (root / "src").mkdir()
     (root / "src" / "App.tsx").write_text("export default function App() { return <p>SQL</p> }", encoding="utf-8")
+    (root / "src" / "app.css").write_text("body { color: navy; }", encoding="utf-8")
+    (root / "src" / "App.css").write_text("main { color: olive; }", encoding="utf-8")
     (root / "dist" / "index.html").write_text("<!doctype html><div id=\"root\">SQL</div>", encoding="utf-8")
     manifest = {"files": [], "build_files": []}
-    for name, key in (("src/App.tsx", "files"), ("dist/index.html", "build_files")):
+    for name, key in (("src/App.tsx", "files"), ("src/app.css", "files"),
+                      ("src/App.css", "files"), ("dist/index.html", "build_files")):
         data = (root / name).read_bytes()
         manifest[key].append({"path": name, "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()})
     version, removed = store.commit_version_with_files(project_id, run_id, manifest,
@@ -94,6 +97,8 @@ def test_azure_sql_restart_checkpoint_events_versions_and_preview(
     assert removed == []
     assert AzureSqlStore(sql_connection_string).get_version(version["id"])["project_id"] == project_id
     assert AzureSqlStore(sql_connection_string).get_version_file(version["id"], "dist/index.html")[0].endswith("SQL</div>")
+    assert AzureSqlStore(sql_connection_string).get_version_file(version["id"], "src/app.css")[0] == "body { color: navy; }"
+    assert AzureSqlStore(sql_connection_string).get_version_file(version["id"], "src/App.css")[0] == "main { color: olive; }"
     access = AzureSqlPreviewAccess(sql_connection_string)
     ticket, _ = access.issue_ticket(version["id"], project_id)
     session, owner = access.consume_ticket(ticket, version["id"])

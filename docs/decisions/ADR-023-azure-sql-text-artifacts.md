@@ -1,6 +1,6 @@
 # ADR-023：Azure SQL 保存交付版本的文本文件
 
-- 状态：Accepted（2026-11-01；schema v2 与本地代码接线已完成，**Azure 实测尚未完成**）
+- 状态：Accepted（2026-11-01；schema v2 定义初始版本文件表；路径排序规则已由 [ADR-030](ADR-030-azure-sql-case-sensitive-version-paths.md) 与 schema v3 补充）
 - 取代：[ADR-022](ADR-022-ephemeral-azure-demo-artifacts.md) 中“交付文件丢失可接受”的决定；继续取代 [ADR-020](ADR-020-azure-files-trusted-demo.md) 的 Azure Files 条款。[ADR-021](ADR-021-azure-sql-platform-state.md) 的 Azure SQL 平台状态决定继续有效。
 - 关联：[PRD](../PRD.md)、[架构](../ARCHITECTURE.md)、[部署说明](../AZURE-PERSISTENCE.md)、[验收](../../tests/cases/DEPLOYMENT-AZURE.md)、[交付物版本边界](ADR-004-generated-deliverable-boundaries.md)
 

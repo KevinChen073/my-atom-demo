@@ -5,9 +5,11 @@ import threading
 from contextlib import contextmanager
 
 import pytest
+from mssql_python.exceptions import IntegrityError
 
-from backend.azure_artifacts import collect_candidate_files, valid_snapshot_path, verify_stored_file
+from backend.azure_artifacts import VersionCommitError, collect_candidate_files, valid_snapshot_path, verify_stored_file
 from backend.azure_sql import AzureSqlStore
+from backend.exceptions import classify
 
 
 def _candidate(tmp_path, content="<main>中文</main>"):
@@ -50,7 +52,11 @@ def test_saved_file_corruption_is_never_served():
         verify_stored_file({"text_content": "corrupted", "utf8_bytes": 5, "sha256": "0" * 64})
 
 
-def test_second_file_insert_failure_does_not_publish_version():
+@pytest.mark.parametrize("injected,expected", [
+    (RuntimeError("injected second file insert failure"), RuntimeError),
+    (IntegrityError("constraint violation", "pk_version_files"), VersionCommitError),
+])
+def test_second_file_insert_failure_does_not_publish_version(injected, expected):
     committed = {"active": None, "versions": [], "files": []}
     rolled_back = []
 
@@ -79,7 +85,7 @@ def test_second_file_insert_failure_does_not_publish_version():
             if sql.startswith("INSERT INTO version_files"):
                 self.staged["files"].append(params[1])
                 if len(self.staged["files"]) == 2:
-                    raise RuntimeError("injected second file insert failure")
+                    raise injected
             return Result()
 
     @contextmanager
@@ -104,7 +110,9 @@ def test_second_file_insert_failure_does_not_publish_version():
                                            ("dist/index.html", html, "dist", "text/html"))]
     manifest = {"files": [{"path": files[0]["path"], "bytes": len(source), "sha256": files[0]["sha256"]}],
                 "build_files": [{"path": files[1]["path"], "bytes": len(html), "sha256": files[1]["sha256"]}]}
-    with pytest.raises(RuntimeError, match="injected"):
+    with pytest.raises(expected) as failure:
         store.commit_version_with_files("project", "run", manifest, files)
+    if expected is VersionCommitError:
+        assert classify(failure.value) == ("version_commit_failed", "VersionCommitError")
     assert rolled_back == [True]
     assert committed == {"active": None, "versions": [], "files": []}

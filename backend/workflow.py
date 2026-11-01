@@ -1032,6 +1032,9 @@ class Workflow:
             if previous_phase == "Plan" or isinstance(exc, PlanValidationError):
                 card["payload"]["failure_stage"] = "plan"
                 card["payload"]["failure_reason_code"] = exc.reason_code if isinstance(exc, PlanValidationError) else code
+            elif code == "version_commit_failed":
+                card["payload"]["failure_stage"] = "commit_version"
+                card["payload"]["failure_reason_code"] = code
             self.store.update_run(run_id, status="failed", phase="NeedsUser", error=reason,
                                   card_json=dumps(card),
                                   event_type="failed", event_payload={"reason": code})

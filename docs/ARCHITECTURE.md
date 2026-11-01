@@ -46,7 +46,7 @@ flowchart LR
 
 ### Azure SQL 文本版本契约（Azure 实测待完成）
 
-`version_files(version_id, relative_path, text_content, utf8_bytes, sha256, kind, mime_type)` 按 `(version_id, relative_path)` 唯一；`text_content` 使用 `NVARCHAR(MAX)`，hash 对严格 UTF-8 编码后的字节计算。只接受 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 的文本扩展名、最多 64 个文件、单文件 512 KiB、每版本 2 MiB。服务端规范化相对路径，禁止绝对路径、`..`、反斜线、同名冲突与 `node_modules`。manifest 中每个文件的 hash 必须与数据库行一致，`dist/index.html` 和引用的文本资源缺一不可。
+`version_files(version_id, relative_path, text_content, utf8_bytes, sha256, kind, mime_type)` 按 `(version_id, relative_path)` 唯一；Azure SQL schema v3 将路径列设为 `Latin1_General_100_BIN2`，与 Linux 文件系统一样区分 `src/app.css` 和 `src/App.css`，见 [ADR-030](decisions/ADR-030-azure-sql-case-sensitive-version-paths.md)。`text_content` 使用 `NVARCHAR(MAX)`，hash 对严格 UTF-8 编码后的字节计算。只接受 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 的文本扩展名、最多 64 个文件、单文件 512 KiB、每版本 2 MiB。服务端规范化相对路径，禁止绝对路径、`..`、反斜线、完全同名冲突与 `node_modules`。manifest 中每个文件的 hash 必须与数据库行一致，`dist/index.html` 和引用的文本资源缺一不可。
 
 ```mermaid
 flowchart LR
