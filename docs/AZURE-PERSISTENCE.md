@@ -25,7 +25,7 @@
 ## 已验证与待验
 
 - [PostgreSQL CI](https://github.com/KevinChen073/my-atom-demo/actions/runs/41297467225) 已在一次性 PostgreSQL 16 上通过 schema v1→v2、checkpoint/待决卡恢复、事件/版本读回和运维只读视图；这不等于 Azure Flexible Server 实测。
-- 本地专项测试覆盖启动配置与 Host 路由；容器镜像、Azure Files 挂载权限、同容器构建、真实 HTTPS 预览、重启读回和访问限制仍需按 [AZ-01～AZ-07](../tests/cases/DEPLOYMENT-AZURE.md) 执行。没有 Azure CLI/订阅资源时不得写成已部署。
+- 本地专项测试覆盖启动配置与 Host 路由；[镜像 CI](https://github.com/KevinChen073/my-atom-demo/actions/runs/41298422604) 已构建镜像并验证默认健康模式。Azure Files 挂载权限、`azure_demo` 同容器真实构建、HTTPS 预览、容器替换读回和访问限制仍需按 [AZ-01～AZ-08](../tests/cases/DEPLOYMENT-AZURE.md) 在 Azure 执行。没有 Azure 资源时不得写成已部署。
 - 独立异常后台继续使用单独服务和 PostgreSQL 只读账号，不能通过主 API 跨项目读取异常。
 
 参考：[Container Apps 存储挂载](https://learn.microsoft.com/en-us/azure/container-apps/storage-mounts)、[Azure Files 挂载教程](https://learn.microsoft.com/en-us/azure/container-apps/storage-mounts-azure-files)、[Container Apps 身份认证](https://learn.microsoft.com/en-us/azure/container-apps/authentication)、[自定义域与证书](https://learn.microsoft.com/en-us/azure/container-apps/custom-domains-certificates)。

@@ -11,7 +11,7 @@
 
 ## 0. MYATOM 当前状态与“成功”含义
 
-本仓库的部署准备分支是 `deploy/azure-preparation`；[PostgreSQL 工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41297467225)已用一次性数据库通过 schema v2 与恢复冒烟，但不部署 Azure。本机尚无 Docker/Azure CLI，镜像和真实 Azure 资源未验证。当前路线以 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md) 为准：Azure Files 挂载 `data/`、主容器内构建，**仅限受信人员**。`az containerapp up --repo` 只读取 GitHub 已提交分支，且可能创建云资源；不能用它代替持久挂载、访问限制及预览域验收。
+本仓库的部署准备分支是 `deploy/azure-preparation`；[PostgreSQL 工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41298422585)已用一次性数据库通过 schema v2 与恢复冒烟，[镜像工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41298422604)已构建并验证默认健康模式，但两者都不部署 Azure。本机尚无 Docker/Azure CLI，真实 Azure 资源未验证。当前路线以 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md) 为准：Azure Files 挂载 `data/`、主容器内构建，**仅限受信人员**。`az containerapp up --repo` 只读取 GitHub 已提交分支，且可能创建云资源；不能用它代替持久挂载、访问限制及预览域验收。
 
 | 里程碑 | 可说明什么 | 不能说明什么 |
 | --- | --- | --- |
@@ -64,10 +64,10 @@ az containerapp up `
 
 | 准备项 | 本仓现状 | 达到可部署候选的条件 |
 | --- | --- | --- |
-| GitHub 源码 | 本地有未提交工作；未建立部署分支。根目录 Dockerfile 与 `.dockerignore` 已准备，但本机无 Docker，尚未构建镜像 | 核对本地改动，建立受控部署分支，提交/推送经确认的代码；实测根目录 Dockerfile 构建 `web/dist` 和 Python 依赖、启动主 API 监听 `0.0.0.0:8000` 并暴露 8000；不把 `.env`、`data/`、密钥推送到 GitHub |
+| GitHub 源码 | 部署分支已推送；根目录 Dockerfile 已在 GitHub Actions 构建并通过默认健康模式冒烟，本机无 Docker | 在真实 Azure 部署时核对镜像摘要、容器设置与 `.env`、`data/`、密钥未进镜像；GitHub CI 不代表 Azure 挂载和域名通过 |
 | Python 服务入口 | `backend/serve.py` 明确只允许 `APP_ENV=local`，主 API 在 `backend/api.py` | 生产入口使用受支持的 ASGI 启动方式；区分测试/生产环境，容器启动、健康检查与关停行为通过测试 |
 | 平台状态 | 本地默认 SQLite；PostgreSQL schema v2 与恢复用例已在 CI 通过 | Azure 从空 PostgreSQL 库开始；显式迁移、重启读回，独立异常后台只读查询；不搬本地历史 |
-| 文件与 Runner | 本地 `data/`；同宿主 Runner；镜像已加入 Node/npm，尚未容器实测 | Azure Files 挂载 `/app/data` 并验证写入权限、文件 hash、容器替换后读回；只在受信演示环境同容器构建，单副本/单 worker，绝非安全沙箱 |
+| 文件与 Runner | 本地 `data/`；同宿主 Runner；镜像已加入 Node/npm 并通过健康模式容器冒烟，尚未在容器内运行生成构建 | Azure Files 挂载 `/app/data` 并验证写入权限、文件 hash、容器替换后读回；只在受信演示环境同容器构建，单副本/单 worker，绝非安全沙箱 |
 | 预览与入口 | 本地 `.localhost` 项目域 | 工作台 HTTPS 域与 `p-<uuid>.<预览域>` wildcard DNS/TLS 指向同一容器 8000；每项目 origin 隔离、票据、CSP、localStorage 刷新读回及入口认证/IP 允许列表实测 |
 | 模型与密钥 | 当前本地 `.env`；拟支持 DeepSeek 与 OpenAI 兼容 API | 服务端密钥和预算配置；用户输入 Key 不进入前端持久存储、仓库、日志或预览代码；真实模型测试需用户提供测试 Key |
 
@@ -104,7 +104,7 @@ docker build -t myatom-api-smoke .
 docker run --rm -p 127.0.0.1:18000:8000 myatom-api-smoke
 ```
 
-另开终端访问 `http://127.0.0.1:18000/api/health`，预期 HTTP 200；访问 `http://127.0.0.1:18000/`，预期 HTTP 503。然后停止容器，确认进程退出。503 是 `container_smoke` 有意封闭应用功能的结果；只有生产存储、Runner 和预览隔离完成后才能开放主流程。本机缺少 Docker，以上命令尚未执行，不能据此声称镜像已通过构建。
+另开终端访问 `http://127.0.0.1:18000/api/health`，预期 HTTP 200；访问 `http://127.0.0.1:18000/`，预期 HTTP 503。然后停止容器，确认进程退出。503 是 `container_smoke` 有意封闭应用功能的结果；只有持久挂载、PostgreSQL、HTTPS 预览域和受信入口限制实测后，才可开放受信演示。上述默认容器冒烟已由 [GitHub 工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41298422604) 完成；本机缺少 Docker，`azure_demo` 与 Azure Files 仍未实测。
 
 ### 3.2 准备完成后的 GitHub 自动部署命令模板
 
