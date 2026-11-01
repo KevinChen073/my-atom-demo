@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime
@@ -132,3 +133,44 @@ class ReadOnlyExceptionStore:
                 build_checks.reverse()
             return {"exception": dict(row), "timeline": timeline, "run_metrics": run_metrics,
                     "build_checks": build_checks}
+
+
+class _PostgresOpsConnection:
+    _views = {
+        "exception_records": "ops_exception_records",
+        "runs": "ops_run_metrics",
+        "events": "ops_event_timeline",
+        "build_check_attempts": "ops_build_checks",
+    }
+
+    def __init__(self, connection):
+        self.connection = connection
+
+    def execute(self, query: str, parameters=()):
+        # This service has only the fixed SELECT statements above. The database
+        # role also has SELECT on these safe views, never on underlying tables.
+        for table, view in self._views.items():
+            query = re.sub(rf"\b{table}\b", view, query)
+        return self.connection.execute(query.replace("?", "%s"), parameters)
+
+
+class PostgresReadOnlyExceptionStore(ReadOnlyExceptionStore):
+    def __init__(self, database_url: str):
+        if not database_url.startswith(("postgresql://", "postgres://")):
+            raise ValueError("OPS_DATABASE_URL 必须是 PostgreSQL 连接地址")
+        self.database_url = database_url
+        self.path = None
+
+    @contextmanager
+    def connection(self):
+        import psycopg
+        from psycopg.rows import dict_row
+
+        try:
+            with psycopg.connect(self.database_url, row_factory=dict_row, connect_timeout=5) as db:
+                db.execute("SET TRANSACTION READ ONLY")
+                wrapper = _PostgresOpsConnection(db)
+                wrapper.execute("SELECT 1 FROM exception_records LIMIT 1")
+                yield wrapper
+        except psycopg.Error as exc:
+            raise DatabaseUnavailable from exc

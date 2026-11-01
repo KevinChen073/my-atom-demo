@@ -11,7 +11,7 @@
 
 ## 0. MYATOM 当前状态与“成功”含义
 
-本仓库 `D:\projects\my-atom-demo` 的 Git 远端是 `https://github.com/KevinChen073/my-atom-demo.git`，当前仍有未提交工作；根目录已有**仅供启动冒烟**的 Dockerfile 与 `.dockerignore`，未构建镜像，尚无 GitHub Actions 工作流；本机当前 shell 未检测到 Docker 命令。因此现在执行 `az containerapp up --repo` 只会读取 GitHub **已提交分支**，不会包含本地最新工作，且当前容器入口还没有生产持久状态与隔离 Runner。官方 [`up --repo` 说明](https://learn.microsoft.com/en-us/azure/container-apps/containerapp-up)支持用仓库 Dockerfile 构建并写入自动部署工作流。
+本仓库 `D:\projects\my-atom-demo` 的 Git 远端是 `https://github.com/KevinChen073/my-atom-demo.git`；根目录已有**仅供启动冒烟**的 Dockerfile 与 `.dockerignore`，未构建镜像。[PostgreSQL 专项工作流](../.github/workflows/postgres-smoke.yml)只用一次性数据库验证持久化适配，不部署 Azure。本机当前 shell 未检测到 Docker 命令。执行 `az containerapp up --repo` 只会读取 GitHub **已提交分支**；当前容器入口还没有生产持久状态与隔离 Runner。官方 [`up --repo` 说明](https://learn.microsoft.com/en-us/azure/container-apps/containerapp-up)支持用仓库 Dockerfile 构建并写入自动部署工作流。
 
 | 里程碑 | 可说明什么 | 不能说明什么 |
 | --- | --- | --- |

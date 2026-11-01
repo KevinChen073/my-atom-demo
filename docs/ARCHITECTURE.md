@@ -22,7 +22,7 @@ flowchart LR
   H --> M[模型服务适配器]
 ```
 
-本地使用 Python API 服务和受控 worker，SQLite 保存平台记录与 checkpoint，项目产物存于非公开数据目录。公开交付选择 GitHub → Azure：主 API、独立异常后台与隔离 Runner 分别部署；平台状态选择 Azure Database for PostgreSQL Flexible Server，交付文件选择私有 Azure Blob Storage，实施顺序和失败边界见 [ADR-017](decisions/ADR-017-azure-persistent-state-and-artifacts.md) 与 [迁移契约](AZURE-PERSISTENCE.md)。这些生产适配尚未完成。Atoms Cloud 仅作为后续可选迁移研究。浏览器从不直接调用模型服务或读取服务器文件。
+本地使用 Python API 服务和受控 worker，默认 SQLite 保存平台记录与 checkpoint，项目产物存于非公开数据目录；也可在 `APP_ENV=local` 配置 `MYATOM_DATABASE_URL` 对 PostgreSQL 平台状态与 checkpoint 做开发验证。公开交付选择 GitHub → Azure：主 API、独立异常后台与隔离 Runner 分别部署；平台状态选择 Azure Database for PostgreSQL Flexible Server，交付文件选择私有 Azure Blob Storage，实施顺序和失败边界见 [ADR-017](decisions/ADR-017-azure-persistent-state-and-artifacts.md) 与 [迁移契约](AZURE-PERSISTENCE.md)。生产 Runner/预览和 Blob 运行时接线尚未完成，生产模式仍拒绝启动。Atoms Cloud 仅作为后续可选迁移研究。浏览器从不直接调用模型服务或读取服务器文件。
 
 下文的 `ProjectRepository`、checkpointer、事件表与异常库属于 **MYATOM 平台**，可以使用服务端数据库；生成交付物自己的业务数据限其预览 origin 下的 `localStorage`。同一项目跨版本保持稳定 origin，不同项目须使用隔离 origin；项目 ID 作为存储键前缀不能阻止同源代码读取其他项目的数据。生成交付物若包含后端，只能有一个进程、一个监听端口，且不得用服务端数据库/缓存保存业务数据；MYATOM 的主 API、预览网关、独立异常后台不计入该限额。
 
@@ -32,9 +32,9 @@ flowchart LR
 
 | 接口 | 责任/最小方法 | 本地候选 | 生产候选与未决 |
 | --- | --- | --- | --- |
-| `ProjectRepository` | 项目/会话/版本 CRUD、乐观版本检查、按 owner 查找 | SQLite | Azure Database for PostgreSQL；需实现事务、迁移与多实例访问 |
-| `CheckpointRepository` | 按 `thread_id` 恢复 LangGraph 状态 | SQLite checkpointer | PostgreSQL `PostgresSaver`；重启恢复待测 |
-| `EventLog` | 原子追加 `seq`、按 `after_seq` 回放 | SQLite | PostgreSQL；同一 run 的序号写入须在事务内串行化 |
+| `ProjectRepository` | 项目/会话/版本 CRUD、乐观版本检查、按 owner 查找 | SQLite；可选 PostgreSQL 开发适配 | Azure Database for PostgreSQL；真实数据库与多实例恢复待测 |
+| `CheckpointRepository` | 按 `thread_id` 恢复 LangGraph 状态 | SQLite checkpointer；可选 PostgreSQL `PostgresSaver` | PostgreSQL；重启恢复待实测 |
+| `EventLog` | 原子追加 `seq`、按 `after_seq` 回放 | SQLite；可选 PostgreSQL，后者锁定 run 行分配序号 | PostgreSQL；并发与故障恢复待实测 |
 | `ArtifactStore` | 按项目/运行/版本保存源码、构建日志、manifest | 本地非公开目录 | 私有 Azure Blob Storage；上传后 hash 对账、版本提交、权限与清理待测 |
 | `GeneratedAppStorage` | 在生成模板内封装带项目/应用命名空间的浏览器 `localStorage` 读写与格式校验；只存生成应用业务数据 | 预览 origin 的浏览器存储 | 同 origin 的 Web 存储；不使用平台 DB/SQL/缓存保存交付物业务数据 |
 | `ModelGateway` | 统一消息、结构化输出、token 用量、超时、取消 | 本地配置的模型 API | Azure 端服务密钥或经授权的临时用户 Key；DeepSeek/OpenAI 兼容性待测 |

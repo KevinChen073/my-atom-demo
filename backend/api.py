@@ -73,8 +73,16 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     settings = settings or Settings()
     if settings.app_env not in {"local", "container_smoke"}:
         raise RuntimeError("生产存储与隔离 Runner 尚未接入，拒绝启动公开 API")
-    store = Store(settings.app_db)
-    preview_access = PreviewAccess(settings.data_dir / "preview_access.sqlite3")
+    if settings.database_url:
+        if settings.app_env != "local":
+            raise RuntimeError("PostgreSQL 开发接入目前只允许本地运行；生产 Runner 与预览尚未完成")
+        from .postgres_store import PostgresStore
+        from .preview_access import PostgresPreviewAccess
+        store = PostgresStore(settings.database_url)
+        preview_access = PostgresPreviewAccess(settings.database_url)
+    else:
+        store = Store(settings.app_db)
+        preview_access = PreviewAccess(settings.data_dir / "preview_access.sqlite3")
     workflow = Workflow(settings, store, model=model)
     messages = MessageService(store, workflow)
 

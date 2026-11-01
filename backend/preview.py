@@ -19,8 +19,14 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
     if settings.app_env != "local":
         raise RuntimeError("同宿主预览仅允许 APP_ENV=local")
-    store = Store(settings.app_db)
-    access = PreviewAccess(settings.data_dir / "preview_access.sqlite3")
+    if settings.database_url:
+        from .postgres_store import PostgresStore
+        from .preview_access import PostgresPreviewAccess
+        store = PostgresStore(settings.database_url)
+        access = PostgresPreviewAccess(settings.database_url)
+    else:
+        store = Store(settings.app_db)
+        access = PreviewAccess(settings.data_dir / "preview_access.sqlite3")
     app = FastAPI(title="MYATOM local preview", docs_url=None, redoc_url=None, openapi_url=None)
 
     def expired_response() -> HTMLResponse:

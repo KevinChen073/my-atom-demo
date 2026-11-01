@@ -163,6 +163,10 @@ class Store:
         db.execute("PRAGMA foreign_keys=ON")
         return db
 
+    @staticmethod
+    def _lock_project(db: sqlite3.Connection, project_id: str) -> None:
+        """SQLite's writer lock already serializes project mutations."""
+
     def record_exception(self, *, trace_id: str, source: str, phase: str, code: str,
                          exception_type: str, project_id: str | None = None,
                          run_id: str | None = None,
@@ -237,7 +241,10 @@ class Store:
                 labels = {"source_compile": "源码编译或类型检查", "dependency_install": "依赖安装",
                           "environment_failure": "构建环境", "build_unknown": "未归类的构建检查"}
                 reason = f"第 {max(1, attempt)} 次构建检查未通过：{labels.get(category, labels['build_unknown'])}。"
-                db.execute("""INSERT OR IGNORE INTO exception_records VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                db.execute("""INSERT OR IGNORE INTO exception_records
+                    (id, trace_id, project_id, run_id, source, phase, code,
+                     exception_type, reason, severity, occurred_at)
+                    VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
                            (str(uuid.uuid5(uuid.NAMESPACE_URL, f"myatom:build:{run_id}:{max(1, attempt)}")),
                             run["trace_id"], run["project_id"], run_id, "build", "BuildTest", "build_check_failed",
                             "BuildCheckFailure", reason, "warning", at))
@@ -328,6 +335,7 @@ class Store:
         run_id, timestamp = str(uuid.uuid4()), now()
         limits = limits or DEFAULT_LIMITS
         with self.lock, self._conn() as db:
+            self._lock_project(db, project_id)
             existing = db.execute("SELECT * FROM runs WHERE project_id=? AND idempotency_key=?", (project_id, idempotency_key)).fetchone()
             if existing:
                 return self._dict(existing), False
@@ -662,11 +670,13 @@ class Store:
         removed_runs: list[str] = []
         with self.lock, self._conn() as db:
             db.execute("BEGIN IMMEDIATE")
+            self._lock_project(db, project_id)
             existing = db.execute("SELECT * FROM versions WHERE run_id=?", (run_id,)).fetchone()
             if existing:
                 return self._dict(existing), removed_runs
             version_id = str(uuid.uuid4())
-            db.execute("INSERT INTO versions VALUES (?,?,?,?,?)", (version_id, project_id, run_id, dumps(manifest), now()))
+            db.execute("INSERT INTO versions (id, project_id, run_id, manifest_json, created_at) VALUES (?,?,?,?,?)",
+                       (version_id, project_id, run_id, dumps(manifest), now()))
             db.execute("UPDATE runs SET version_id=?, updated_at=? WHERE id=?", (version_id, now(), run_id))
             db.execute("UPDATE projects SET active_version_id=?, updated_at=? WHERE id=?", (version_id, now(), project_id))
             versions = db.execute("SELECT id, run_id FROM versions WHERE project_id=? ORDER BY rowid", (project_id,)).fetchall()
@@ -686,6 +696,7 @@ class Store:
     def activate_version(self, project_id: str, version_id: str) -> dict[str, Any]:
         with self.lock, self._conn() as db:
             db.execute("BEGIN IMMEDIATE")
+            self._lock_project(db, project_id)
             version = db.execute("SELECT id FROM versions WHERE id=? AND project_id=?", (version_id, project_id)).fetchone()
             if not version:
                 raise NotFound("可用版本不存在或已被淘汰")

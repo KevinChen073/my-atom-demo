@@ -78,3 +78,27 @@ class PreviewAccess:
             row = db.execute("SELECT project_id FROM preview_sessions WHERE token_hash=? AND version_id=? AND expires_at>?",
                              (_hash(token), version_id, now())).fetchone()
             return row[0] if row else None
+
+
+class PostgresPreviewAccess(PreviewAccess):
+    """Same ticket API on the shared platform database; schema is migrated separately."""
+
+    def __init__(self, database_url: str):
+        self.database_url = database_url
+        self.lock = threading.RLock()
+
+    def _conn(self):
+        from .postgres_store import postgres_connection
+        return postgres_connection(self.database_url)
+
+    def consume_ticket(self, ticket: str, version_id: str) -> tuple[str, str] | None:
+        session, expires = secrets.token_urlsafe(32), _expiry(60)
+        with self.lock, self._conn() as db:
+            row = db.execute("""UPDATE preview_tickets SET used=1
+                WHERE token_hash=? AND version_id=? AND used=0 AND expires_at>?
+                RETURNING project_id""", (_hash(ticket), version_id, now())).fetchone()
+            if not row:
+                return None
+            db.execute("INSERT INTO preview_sessions VALUES (?,?,?,?)",
+                       (_hash(session), version_id, row["project_id"], expires))
+        return session, row["project_id"]

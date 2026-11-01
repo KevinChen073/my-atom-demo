@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -18,6 +18,7 @@ class Settings:
     root: Path = ROOT
     data_dir: Path = Path(os.getenv("MYATOM_DATA_DIR", str(ROOT / "data"))).resolve()
     app_env: str = os.getenv("APP_ENV", "local")
+    database_url: str = field(default_factory=lambda: os.getenv("MYATOM_DATABASE_URL", ""), repr=False)
     model_api_key: str = os.getenv("MODEL_API_KEY", "")
     model_name: str = os.getenv("MODEL_NAME", "deepseek-flash")
     model_base_url: str = os.getenv("MODEL_BASE_URL", "https://api.deepseek.com")

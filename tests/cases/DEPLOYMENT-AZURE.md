@@ -6,11 +6,11 @@
 | --- | --- | --- |
 | AZ-01 源码与凭证 | 在受控部署分支核对提交清单与镜像文件；`.env`、`data/`、数据库、真实 Key 和用户数据均未进入 Git 或镜像。 | GitHub `deploy/azure-preparation` 已推送并完成本地提交清单/常见密钥检查；镜像仍未构建或检查，整项未通过。 |
 | AZ-02 容器入口 | 从根目录 Dockerfile 构建镜像，启动主 API，`/api/health` 可读；检查启动、健康探针与正常关停。容器默认 `APP_ENV=container_smoke`，不得把此结果标成主流程可用。 | 阻断：本机无 Docker，镜像未构建。 |
-| AZ-03 持久状态 | 测试域用 PostgreSQL 保存项目/决策/事件/checkpoint/版本/预览会话，以私有 Blob 保存源码与构建产物；上传后按 SHA-256 对账。创建项目、待决卡与可用版本，重启/替换实例后核对事件游标、checkpoint、版本指针、源码与构建产物；故障注入覆盖 Blob 上传和数据库事务间断。详见 [ADR-017](../../docs/decisions/ADR-017-azure-persistent-state-and-artifacts.md)。 | 离线 Blob 契约测试 3/3 通过；PostgreSQL、真实 Blob、运行时接线与 Azure 重启读回未执行，整项未通过。 |
+| AZ-03 持久状态 | 测试域用 PostgreSQL 保存项目/决策/事件/checkpoint/版本/预览会话，以私有 Blob 保存源码与构建产物；上传后按 SHA-256 对账。创建项目、待决卡与可用版本，重启/替换实例后核对事件游标、checkpoint、版本指针、源码与构建产物；故障注入覆盖 Blob 上传和数据库事务间断。详见 [ADR-017](../../docs/decisions/ADR-017-azure-persistent-state-and-artifacts.md)。 | PostgreSQL 迁移/开发适配与一次性服务冒烟用例已写入，真实 PostgreSQL 结果以 CI 运行记录为准；离线 Blob 契约测试 3/3 通过。真实 Azure PostgreSQL/Blob、版本文件运行时接线与实例重启读回未执行，整项未通过。 |
 | AZ-04 隔离 Runner | 生成源码在独立受限执行单元构建；验证非 root、资源/时长、网络、文件和密钥边界、终止与清理。主 API 容器不执行生成代码。 | 未执行：目前只有本地同宿主 Runner。 |
 | AZ-05 HTTPS 预览 | 每项目稳定独立 HTTPS origin，跨版本 `localStorage` 刷新读回，跨项目无法读回；票据/会话过期、重载、CSP、iframe 与 `TC-SEC-01` 均实测。 | 未执行：本地 `.localhost` 不能代表生产。 |
 | AZ-06 模型与预算 | 测试域只配置服务端测试 Key；DeepSeek/OpenAI 兼容请求、输出/用量、预算停机、脱敏与错误归因通过。若启用访客 Key，验证跨请求、重启与撤销边界。 | 未执行：真实生产模型配置未接入。 |
-| AZ-07 异常后台 | 运维服务独立部署，以 PostgreSQL 只读角色查询同一权威数据库的安全异常视图；管理员认证、Trace ID、跨项目查询、拒绝未授权及拒绝写入均通过。 | 未执行：目前仅本地 SQLite 只读。 |
+| AZ-07 异常后台 | 运维服务独立部署，以 PostgreSQL 只读角色查询同一权威数据库的安全异常视图；管理员认证、Trace ID、跨项目查询、拒绝未授权及拒绝写入均通过。 | PostgreSQL 安全视图与独立查询适配已写入；真实只读角色测试以 CI 记录为准，Azure 独立部署仍未执行。 |
 | AZ-08 公开端到端 | 无痕浏览器打开公开 URL，从新建项目到真实构建、预览交互、刷新恢复和旧版回滚；记录失败路径及升级后复测结果。 | 未执行：尚无 Azure 测试域或公开 URL。 |
 
 **出口**：AZ-01 至 AZ-07 在测试域通过且 AZ-08 在公开域通过后，才可称为可交付 MYATOM。AZ-02 单独通过仅表示容器启动。具体业务用例沿用 [PRD §7](../../docs/PRD.md#7-测试与-tc-维护) 与 [MVP2 TC](MVP2.md)。

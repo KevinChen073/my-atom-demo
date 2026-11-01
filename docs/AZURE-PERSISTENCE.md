@@ -1,6 +1,6 @@
 # Azure 持久化实施与迁移（2026-11-01）
 
-决策见 [ADR-017](decisions/ADR-017-azure-persistent-state-and-artifacts.md)，产品边界见 [PRD §5](PRD.md#5-持久化与版本)，上线出口见 [Azure 部署 TC](../tests/cases/DEPLOYMENT-AZURE.md)。本文是实施顺序和数据契约；**当前 Azure PostgreSQL、Blob、生产 Runner/预览均未接通**。
+决策见 [ADR-017](decisions/ADR-017-azure-persistent-state-and-artifacts.md)，产品边界见 [PRD §5](PRD.md#5-持久化与版本)，上线出口见 [Azure 部署 TC](../tests/cases/DEPLOYMENT-AZURE.md)。本文是实施顺序和数据契约；**PostgreSQL 开发适配与专项冒烟已写入代码，但真实数据库读回仍待执行；Blob 仍未连入版本/预览，生产 Runner/预览未接通**。
 
 ## 数据归属
 
@@ -22,7 +22,14 @@
 5. **本地数据迁移彩排**：停止本地写入；用 SQLite backup API 导出三个一致的库及 `artifacts` 目录清单（逐文件 SHA-256）；导入 PostgreSQL、Blob 后按项目/版本/事件/checkpoint 对账。预览票据不迁。原备份只读保留，直到 Azure 测试域通过重启、回滚与异常后台验收。
 6. **真实 Azure 验收**：配置私网或受限网络、托管身份、服务端密钥和备份策略；在测试域执行 [AZ-03/AZ-07](../tests/cases/DEPLOYMENT-AZURE.md)，再连同隔离 Runner、HTTPS 预览完成公开端到端。无真实 Azure 资源时标记“未执行”。
 
-仓库当前第一块实现是 [`BlobArtifactStore`](../backend/blob_artifacts.py)：它接收已经构建好的候选目录，逐文件只创建不覆盖、读回核验，最后写完成标记；读文件要求数据库持有的标记 SHA-256。离线契约测试可通过，但尚未连接 Runner/预览或真实 Blob。Azure 可选依赖列在 [`requirements-azure.txt`](../requirements-azure.txt)，当前容器冒烟镜像未启用它们。PostgreSQL schema、运行时适配和数据搬迁仍属后续实施项。
+仓库的 [`BlobArtifactStore`](../backend/blob_artifacts.py) 接收已构建候选，逐文件只创建不覆盖、读回核验，最后写完成标记；读文件要求数据库持有的标记 SHA-256。离线契约测试可通过，但尚未连接 Runner/预览或真实 Blob。Azure 可选依赖列在 [`requirements-azure.txt`](../requirements-azure.txt)，当前容器冒烟镜像未启用它们。
+
+### PostgreSQL 开发适配与验证
+
+- [`postgres_v1.sql`](../backend/sql/postgres_v1.sql) 定义平台表、单项目活动 run 唯一索引、按 run 串行的事件序号前提、预览票据和四个脱敏运维视图。用 `python -m backend.migrate_postgres --database-url <连接地址>` 在部署阶段显式建表并执行 LangGraph `PostgresSaver.setup()`；主 API 启动不迁移 schema。连接地址只放服务端环境/密钥配置，不写入命令历史、仓库或日志。迁移角色需建表/建索引权限，运行角色只需平台表和 checkpoint 表的读写权限。
+- 本机设置 `APP_ENV=local` 和 `MYATOM_DATABASE_URL` 后，主 API、LangGraph checkpoint 与本地预览票据使用同一 PostgreSQL 库，生成应用仍经本机 Runner/`.localhost` 预览。没有配置时完全沿用 SQLite。设置数据库地址但使用 `APP_ENV=production` 会拒绝启动；这条开发接线不代表公网部署可用。
+- 独立异常后台设置 `OPS_DATABASE_URL` 使用另一数据库账号，优先于 `OPS_DB_PATH`。数据库管理员仅授予它 `USAGE ON SCHEMA public` 以及 `SELECT ON ops_exception_records, ops_run_metrics, ops_event_timeline, ops_build_checks`；**不要授予底层表、所有表或默认表权限**。运维连接再执行只读事务，后台代码只查询这四个视图。部署前用真实只读账号验证安全视图可查、`projects` 等底层表不可读、写操作被拒绝。
+- [`postgres-smoke.yml`](../.github/workflows/postgres-smoke.yml) 使用一次性 PostgreSQL 服务运行 [专项测试](../tests/test_postgres_platform.py)：schema/checkpoint 初始化、项目/事件/版本指针跨连接读回、票据一次性兑换、待决卡跨 API 实例恢复、运维角色只读。工作流结果尚须以实际 Actions 运行记录判定。Azure PostgreSQL、Blob、实例替换和本地 SQLite 数据迁移仍未验证。
 
 ## 故障注入与对账
 

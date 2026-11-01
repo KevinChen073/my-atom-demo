@@ -206,8 +206,16 @@ class Workflow:
         self.model = model or ModelGateway(settings, store)
         self.runner = LocalRunner(settings, store)
         self.settings.data_dir.mkdir(parents=True, exist_ok=True)
-        self.checkpoint_connection = sqlite3.connect(settings.checkpoint_db, check_same_thread=False)
-        self.checkpointer = SqliteSaver(self.checkpoint_connection)
+        if settings.database_url:
+            import psycopg
+            from psycopg.rows import dict_row
+            from langgraph.checkpoint.postgres import PostgresSaver
+            self.checkpoint_connection = psycopg.connect(settings.database_url, autocommit=True,
+                                                         row_factory=dict_row, connect_timeout=5)
+            self.checkpointer = PostgresSaver(self.checkpoint_connection)
+        else:
+            self.checkpoint_connection = sqlite3.connect(settings.checkpoint_db, check_same_thread=False)
+            self.checkpointer = SqliteSaver(self.checkpoint_connection)
         self.graph = self._build_graph()
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="myatom-worker")
         self.queued: set[str] = set()
