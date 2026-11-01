@@ -1,0 +1,28 @@
+name: Azure demo image smoke
+
+on:
+  push:
+    branches: [deploy/azure-preparation]
+  workflow_dispatch:
+
+jobs:
+  image-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -r requirements-azure.txt pytest httpx
+      - run: python -m pytest -q tests/test_azure_demo_runtime.py
+      - run: docker build -t myatom-demo-smoke .
+      - name: Verify health-only default container
+        run: |
+          docker run -d --name myatom-demo-smoke -p 18000:8000 myatom-demo-smoke
+          trap 'docker rm -f myatom-demo-smoke' EXIT
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:18000/api/health > /tmp/myatom-health.json; then break; fi
+            sleep 2
+          done
+          python -c 'import json; assert json.load(open("/tmp/myatom-health.json"))["app_env"] == "container_smoke"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:18000/)" = "503"

@@ -1,6 +1,6 @@
 # ADR-017：Azure 平台状态与交付文件的持久化边界
 
-- 状态：Accepted（2026-11-01，用户确认继续采用持久化数据库与文件；具体 Azure 服务为本路线的实现选择）
+- 状态：Superseded by [ADR-020](ADR-020-azure-files-trusted-demo.md)（2026-11-01，用户明确改选 Azure Files `data/` 与主 API 容器内构建）。以下保留原方案供追溯，不再作为当前实施依据。
 - 关联：[PRD](../PRD.md#5-持久化与版本)、[架构](../ARCHITECTURE.md)、[ADR-004](ADR-004-generated-deliverable-boundaries.md)、[ADR-014](ADR-014-atoms-deployment-and-model-credentials.md)、[实施与迁移](../AZURE-PERSISTENCE.md)、[验收](../../tests/cases/DEPLOYMENT-AZURE.md)
 
 ## 背景

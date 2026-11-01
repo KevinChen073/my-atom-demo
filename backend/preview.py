@@ -17,8 +17,10 @@ VERSION_ID = re.compile(r"^[0-9a-f-]{36}$")
 
 def create_preview_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or Settings()
-    if settings.app_env != "local":
-        raise RuntimeError("同宿主预览仅允许 APP_ENV=local")
+    if settings.app_env not in {"local", "azure_demo"}:
+        raise RuntimeError("当前环境不允许预览")
+    settings.validate_azure_demo()
+    domain = settings.preview_base_domain if settings.app_env == "azure_demo" else "localhost"
     if settings.database_url:
         from .postgres_store import PostgresStore
         from .preview_access import PostgresPreviewAccess
@@ -63,7 +65,7 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
         if not project_id:
             raise HTTPException(status_code=401, detail="预览访问已过期，请从工作台重新打开")
         version = store.get_version(version_id)
-        if version["project_id"] != project_id or request.url.hostname != preview_host(project_id):
+        if version["project_id"] != project_id or request.url.hostname != preview_host(project_id, domain):
             raise HTTPException(status_code=403, detail="预览无权访问此项目")
         return version, project_id
 
@@ -72,7 +74,7 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
         if not VERSION_ID.fullmatch(version_id):
             raise HTTPException(status_code=404, detail="版本不存在")
         version = store.get_version(version_id)
-        if request.url.hostname != preview_host(version["project_id"]):
+        if request.url.hostname != preview_host(version["project_id"], domain):
             raise HTTPException(status_code=403, detail="预览域与项目不匹配")
         session = access.consume_ticket(ticket, version_id)
         if not session:
@@ -117,4 +119,4 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
     return app
 
 
-app = create_preview_app()
+app = create_preview_app() if Settings().app_env != "azure_demo" else None

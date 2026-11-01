@@ -1,16 +1,16 @@
-# GitHub → Azure 部署验收（2026-11-01）
+# GitHub → Azure 受信演示验收（2026-11-01）
 
-路线决定见 [ADR-014](../../docs/decisions/ADR-014-atoms-deployment-and-model-credentials.md)。本表区分容器启动、测试域功能和公开交付；通过一项不推断其他项通过。每项记录环境、Git 提交、镜像摘要、时间、脱敏日志与实际结果。
+当前边界见 [ADR-020](../../docs/decisions/ADR-020-azure-files-trusted-demo.md)。本表区分容器启动、持久数据与获授权评审可用；每项记录 Azure 资源、Git 提交、镜像摘要、时间、脱敏日志和实际结果。没有真实 Azure 资源时标记“未执行”。
 
 | ID | 操作与通过判定 | 当前状态 |
 | --- | --- | --- |
-| AZ-01 源码与凭证 | 在受控部署分支核对提交清单与镜像文件；`.env`、`data/`、数据库、真实 Key 和用户数据均未进入 Git 或镜像。 | GitHub `deploy/azure-preparation` 已推送并完成本地提交清单/常见密钥检查；镜像仍未构建或检查，整项未通过。 |
-| AZ-02 容器入口 | 从根目录 Dockerfile 构建镜像，启动主 API，`/api/health` 可读；检查启动、健康探针与正常关停。容器默认 `APP_ENV=container_smoke`，不得把此结果标成主流程可用。 | 阻断：本机无 Docker，镜像未构建。 |
-| AZ-03 持久状态 | 测试域用 PostgreSQL 保存项目/决策/事件/checkpoint/版本/预览会话，以私有 Blob 保存源码与构建产物；上传后按 SHA-256 对账。创建项目、待决卡与可用版本，重启/替换实例后核对事件游标、checkpoint、版本指针、源码与构建产物；故障注入覆盖 Blob 上传和数据库事务间断。详见 [ADR-017](../../docs/decisions/ADR-017-azure-persistent-state-and-artifacts.md)。 | PostgreSQL 迁移/开发适配与一次性服务冒烟用例已写入，真实 PostgreSQL 结果以 CI 运行记录为准；离线 Blob 契约测试 3/3 通过。真实 Azure PostgreSQL/Blob、版本文件运行时接线与实例重启读回未执行，整项未通过。 |
-| AZ-04 隔离 Runner | 生成源码在独立受限执行单元构建；验证非 root、资源/时长、网络、文件和密钥边界、终止与清理。主 API 容器不执行生成代码。 | 未执行：目前只有本地同宿主 Runner。 |
-| AZ-05 HTTPS 预览 | 每项目稳定独立 HTTPS origin，跨版本 `localStorage` 刷新读回，跨项目无法读回；票据/会话过期、重载、CSP、iframe 与 `TC-SEC-01` 均实测。 | 未执行：本地 `.localhost` 不能代表生产。 |
-| AZ-06 模型与预算 | 测试域只配置服务端测试 Key；DeepSeek/OpenAI 兼容请求、输出/用量、预算停机、脱敏与错误归因通过。若启用访客 Key，验证跨请求、重启与撤销边界。 | 未执行：真实生产模型配置未接入。 |
-| AZ-07 异常后台 | 运维服务独立部署，以 PostgreSQL 只读角色查询同一权威数据库的安全异常视图；管理员认证、Trace ID、跨项目查询、拒绝未授权及拒绝写入均通过。 | PostgreSQL 安全视图与独立查询适配已写入；真实只读角色测试以 CI 记录为准，Azure 独立部署仍未执行。 |
-| AZ-08 公开端到端 | 无痕浏览器打开公开 URL，从新建项目到真实构建、预览交互、刷新恢复和旧版回滚；记录失败路径及升级后复测结果。 | 未执行：尚无 Azure 测试域或公开 URL。 |
+| AZ-01 源码与凭证 | 核对 Git/镜像；`.env`、`data/`、数据库、真实密钥和用户数据不进入仓库或镜像。 | 部署分支已推送并做本地密钥检查；镜像未检查。 |
+| AZ-02 容器入口 | Dockerfile 构建，默认 `container_smoke` 只开放 `/api/health`；`azure_demo` 缺 PostgreSQL、HTTPS 域或持久挂载时拒绝启动；正常关停后可重启。 | 本机无 Docker；镜像未实测。 |
+| AZ-03 持久状态与文件 | 空 PostgreSQL 库迁移到 v2；Azure Files 挂载 `/app/data`。创建项目、待决卡与版本，记录文件 hash；替换容器后核对事件、checkpoint、版本指针、源码、预览文件。模拟文件写入中断和数据库提交中断，旧版仍可读。 | 一次性 PostgreSQL 16 的迁移/恢复 CI [已通过](https://github.com/KevinChen073/my-atom-demo/actions/runs/41297467225)；真实 Azure Files 与容器替换未执行。 |
+| AZ-04 受信执行边界 | 仅 1 副本/1 worker；Container Apps 身份认证或 IP 允许列表实际拒绝未授权请求。已授权账号可构建固定模板；验证超时、取消、构建失败、密钥不出现在生成源码/日志。明确标记同容器构建**不是安全沙箱**。 | 本地代码门禁已加入；真实入口限制与同容器构建未执行。 |
+| AZ-05 HTTPS 预览 | 工作台与每项目 `p-<uuid>.<预览域>` 分别使用有效 HTTPS 域；跨版本 `localStorage` 刷新读回，同项目稳定、跨项目不能读回；票据过期、重载、CSP 和 iframe 实测。 | Host 路由与 URL 生成已接线；真实 DNS/TLS 与浏览器未执行。 |
+| AZ-06 模型与预算 | 测试域只用服务端测试 Key；真实模型生成、用量、预算停机、脱敏及错误归因通过。 | Azure 模型调用未执行。 |
+| AZ-07 异常后台 | 运维服务单独部署，PostgreSQL 只读角色只查安全视图；管理员认证、Trace ID、跨项目查询与写入拒绝通过。 | 一次性 PostgreSQL 只读用例通过；Azure 后台未部署。 |
+| AZ-08 获授权端到端 | 评审用受控账号或允许 IP 打开在线链接，完成真实生成、预览操作、刷新恢复与回滚；无权限访问被拒绝。记录失败路径与升级后复测。 | 未执行：尚无 Azure 测试域或在线链接。 |
 
-**出口**：AZ-01 至 AZ-07 在测试域通过且 AZ-08 在公开域通过后，才可称为可交付 MYATOM。AZ-02 单独通过仅表示容器启动。具体业务用例沿用 [PRD §7](../../docs/PRD.md#7-测试与-tc-维护) 与 [MVP2 TC](MVP2.md)。
+**出口**：AZ-01 至 AZ-08 在同一 Azure 测试域取得证据后，才能称为受信演示可交付。若要面向匿名公网提供生成能力，需先增加隔离 Runner 并重新制定安全验收。业务用例沿用 [PRD §7](../../docs/PRD.md#7-测试与-tc-维护) 与 [MVP2 TC](MVP2.md)。

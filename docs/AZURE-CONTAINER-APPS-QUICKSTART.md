@@ -11,13 +11,13 @@
 
 ## 0. MYATOM 当前状态与“成功”含义
 
-本仓库 `D:\projects\my-atom-demo` 的 Git 远端是 `https://github.com/KevinChen073/my-atom-demo.git`；根目录已有**仅供启动冒烟**的 Dockerfile 与 `.dockerignore`，未构建镜像。[PostgreSQL 专项工作流](../.github/workflows/postgres-smoke.yml)只用一次性数据库验证持久化适配，不部署 Azure。本机当前 shell 未检测到 Docker 命令。执行 `az containerapp up --repo` 只会读取 GitHub **已提交分支**；当前容器入口还没有生产持久状态与隔离 Runner。官方 [`up --repo` 说明](https://learn.microsoft.com/en-us/azure/container-apps/containerapp-up)支持用仓库 Dockerfile 构建并写入自动部署工作流。
+本仓库的部署准备分支是 `deploy/azure-preparation`；[PostgreSQL 工作流](https://github.com/KevinChen073/my-atom-demo/actions/runs/41297467225)已用一次性数据库通过 schema v2 与恢复冒烟，但不部署 Azure。本机尚无 Docker/Azure CLI，镜像和真实 Azure 资源未验证。当前路线以 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md) 为准：Azure Files 挂载 `data/`、主容器内构建，**仅限受信人员**。`az containerapp up --repo` 只读取 GitHub 已提交分支，且可能创建云资源；不能用它代替持久挂载、访问限制及预览域验收。
 
 | 里程碑 | 可说明什么 | 不能说明什么 |
 | --- | --- | --- |
 | A：官方样例 URL 可打开 | Azure 账户、Container Apps 环境、公开入口可用 | MYATOM 代码已部署或功能可用 |
 | B：MYATOM `/api/health` 返回 200 | 主 API 容器启动并可接请求 | LangGraph 恢复、持久化、模型、隔离预览或真实生成已通过 |
-| C：公开 URL 完成 PRD 主旅程 | 按具体测试记录判定在线交付 | 单次成功不自动证明重启恢复、跨项目隔离及更新稳定性 |
+| C：获授权评审 URL 完成 PRD 主旅程 | 按具体测试记录判定受信演示可用 | 单次成功不自动证明重启恢复、跨项目隔离及更新稳定性 |
 
 ## 1. 最快试通 Azure：门户操作
 
@@ -66,13 +66,36 @@ az containerapp up `
 | --- | --- | --- |
 | GitHub 源码 | 本地有未提交工作；未建立部署分支。根目录 Dockerfile 与 `.dockerignore` 已准备，但本机无 Docker，尚未构建镜像 | 核对本地改动，建立受控部署分支，提交/推送经确认的代码；实测根目录 Dockerfile 构建 `web/dist` 和 Python 依赖、启动主 API 监听 `0.0.0.0:8000` 并暴露 8000；不把 `.env`、`data/`、密钥推送到 GitHub |
 | Python 服务入口 | `backend/serve.py` 明确只允许 `APP_ENV=local`，主 API 在 `backend/api.py` | 生产入口使用受支持的 ASGI 启动方式；区分测试/生产环境，容器启动、健康检查与关停行为通过测试 |
-| 平台状态 | 项目/事件/checkpoint/预览票据使用本机 SQLite；构建产物在 `data/` | 按 [ADR-017](decisions/ADR-017-azure-persistent-state-and-artifacts.md) 接 PostgreSQL 与私有 Blob，从空库/空容器验证 schema、文件接口、重启读回和独立异常后台只读访问；不搬迁本地历史数据，不把容器临时盘当作权威数据源 |
-| Runner/预览 | `backend/preview.py` 只允许本地环境和 `.localhost` 项目子域；本地跨站 iframe 现用一次性票据兑换受限会话路径 | 独立隔离 Runner、HTTPS 稳定项目预览 origin、生产会话机制与跨项目隔离通过 `TC-SEC-01`；不能把主 API 容器内直接执行生成代码视为安全隔离，也不能把本地路径令牌方案直接当作公网设计 |
+| 平台状态 | 本地默认 SQLite；PostgreSQL schema v2 与恢复用例已在 CI 通过 | Azure 从空 PostgreSQL 库开始；显式迁移、重启读回，独立异常后台只读查询；不搬本地历史 |
+| 文件与 Runner | 本地 `data/`；同宿主 Runner；镜像已加入 Node/npm，尚未容器实测 | Azure Files 挂载 `/app/data` 并验证写入权限、文件 hash、容器替换后读回；只在受信演示环境同容器构建，单副本/单 worker，绝非安全沙箱 |
+| 预览与入口 | 本地 `.localhost` 项目域 | 工作台 HTTPS 域与 `p-<uuid>.<预览域>` wildcard DNS/TLS 指向同一容器 8000；每项目 origin 隔离、票据、CSP、localStorage 刷新读回及入口认证/IP 允许列表实测 |
 | 模型与密钥 | 当前本地 `.env`；拟支持 DeepSeek 与 OpenAI 兼容 API | 服务端密钥和预算配置；用户输入 Key 不进入前端持久存储、仓库、日志或预览代码；真实模型测试需用户提供测试 Key |
 
-上述条件不满足时，最多部署一个**受限测试容器**验证启动，不把它开放给评审作为完整 MYATOM。生产适配的详细拆分见 [部署提案 §2](ATOM-GITHUB-TO-DEPLOYMENT-PROPOSAL.md)。
+上述条件不满足时，最多部署一个**受限测试容器**验证启动。受信演示需在容器配置 `APP_ENV=azure_demo`、`MYATOM_TRUSTED_DEMO=1`、`MYATOM_DATABASE_URL`、`MODEL_API_KEY`、`WORKBENCH_ORIGIN`、`PREVIEW_BASE_DOMAIN`、`MYATOM_DATA_DIR=/app/data`；缺持久挂载或域名配置时启动会失败。访问限制必须先在 Container Apps ingress 层配置并实测。实际访问参数和凭证只放 Azure 服务端配置，不写进仓库。
 
-### 3.1.1 本地容器启动冒烟
+### 3.1.1 Azure Files 挂载与运行参数
+
+先在 Container Apps 环境登记**经典 Azure Files 共享**，再导出应用 YAML，在容器 `volumeMounts` 中加入 `/app/data`，并在 `template.volumes` 中引用环境级 `storageName`。下面是应合并到应用 YAML 的片段，不能当完整资源定义直接提交；具体字段和操作以 [微软挂载教程](https://learn.microsoft.com/en-us/azure/container-apps/storage-mounts-azure-files) 为准：
+
+```yaml
+template:
+  containers:
+    - name: myatom-api
+      volumeMounts:
+        - volumeName: myatom-data
+          mountPath: /app/data
+  volumes:
+    - name: myatom-data
+      storageType: AzureFile
+      storageName: myatom-files
+  scale:
+    minReplicas: 1
+    maxReplicas: 1
+```
+
+镜像默认是 `container_smoke`。挂载、空 PostgreSQL 库 schema v2 迁移、HTTPS 工作台和 wildcard 预览域、受信入口限制就绪后，才将运行配置改为 `azure_demo`。挂载路径必须能被容器内 `myatom` 用户写入；若启动时报挂载或权限错误，先检查 Azure Files 挂载配置，不要改为临时盘继续。使用单一 Uvicorn worker。Azure 的入口认证或 IP 规则须覆盖工作台及所有预览子域。
+
+### 3.1.2 本地容器启动冒烟
 
 在具备 Docker 的机器上，从仓库根目录执行：
 
@@ -85,7 +108,7 @@ docker run --rm -p 127.0.0.1:18000:8000 myatom-api-smoke
 
 ### 3.2 准备完成后的 GitHub 自动部署命令模板
 
-官方 `up --repo` 会创建 Azure 容器资源、镜像仓库与 GitHub Actions 工作流，并要求授权访问 GitHub；**不要直接对当前 `main` 和未就绪代码执行**。以下模板仅在部署分支已有 Dockerfile、生产适配和测试结果后使用；把尖括号内容替换为真实值。
+官方 `up --repo` 会创建 Azure 容器资源、镜像仓库与 GitHub Actions 工作流，并要求授权访问 GitHub；**不要直接对当前 `main` 和未就绪代码执行**。以下模板只用于准备部署分支的容器入口；之后仍须配置持久卷、数据库、访问限制和预览域。把尖括号内容替换为真实值。
 
 ```powershell
 $resourceGroup = "<MYATOM 专用资源组>"
@@ -112,9 +135,9 @@ az containerapp up `
 
 1. 在 Azure Container App 的配置中添加运行时密钥，并通过环境变量引用；不要在命令行参数、GitHub 文件或截图中粘贴实际 Key。方法见 [Container Apps 密钥](https://learn.microsoft.com/en-us/azure/container-apps/manage-secrets)与[环境变量](https://learn.microsoft.com/en-us/azure/container-apps/environment-variables)。
 2. 获取部署 URL，访问 `https://<主域名>/api/health`，检查 `ok`、环境和模型配置状态。这个接口只能验证 API 启动。失败时看 [容器日志](https://learn.microsoft.com/en-us/azure/container-apps/log-streaming)；日志不得包含 Key。
-3. 分别部署独立异常后台、持久数据库、产物存储和隔离 Runner/预览网关；核对它们的访问权限与域名。平台服务和 MYATOM 生成应用预览是不同的部署边界。
-4. 在公开 URL 逐项执行 `TC-E2E-01`（生成应用操作与刷新读回）、`TC-SEC-01`（密钥与跨项目隔离）、重启后 LangGraph/checkpoint 恢复、SSE 回放、版本回滚及独立异常后台只读查询；记录环境、Git 提交号、URL、时间、实际结果、截图与脱敏日志。失败不能以 `/api/health` 成功替代。
+3. 单独部署异常后台并授予 PostgreSQL 安全视图只读权限；主应用挂载 Azure Files，Host 路由工作台与每项目预览域。核对访问限制、挂载权限、域名和证书；主容器内构建仅限获授权评审使用。
+4. 在获授权测试 URL 逐项执行 `TC-E2E-01`（生成应用操作与刷新读回）、`TC-SEC-01`（密钥与跨项目隔离）、重启后 LangGraph/checkpoint 恢复、SSE 回放、版本回滚及独立异常后台只读查询；验证未授权请求被拒绝。记录环境、Git 提交号、URL、时间、实际结果、截图与脱敏日志。
 
 ## 本文未验证的边界
 
-这份指南核对了 Azure 官方操作步骤与当前仓库结构，**没有登录 Azure、创建资源、连接 GitHub、提交/推送代码、配置密钥或访问生产 URL**。本机未检测到 Azure CLI。首个样例 URL 需要你实际运行后才能确认；MYATOM 完整上线还依赖 §3.1 的生产适配和公开环境验收。
+这份指南核对了 Azure 官方操作步骤与当前仓库结构；GitHub 准备分支已推送，但**没有登录 Azure、创建云资源、配置密钥或访问 Azure URL**。本机未检测到 Azure CLI。首个样例 URL 需要实际运行后才能确认；受信演示交付还依赖 §3.1 的挂载、访问限制、域名和真实环境验收。

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -30,6 +31,27 @@ class Settings:
     max_fix_rounds: int = int(os.getenv("MAX_FIX_ROUNDS", str(DEFAULT_LIMITS["fix_rounds"])))
     preview_port: int = int(os.getenv("PREVIEW_PORT", "8001"))
     workbench_origin: str = os.getenv("WORKBENCH_ORIGIN", "http://127.0.0.1:8000")
+    preview_base_domain: str = os.getenv("PREVIEW_BASE_DOMAIN", "")
+    trusted_demo: bool = os.getenv("MYATOM_TRUSTED_DEMO", "") == "1"
+
+    def validate_azure_demo(self) -> None:
+        """Fail closed before starting a container with persistent demo writes."""
+        from urllib.parse import urlparse
+
+        if self.app_env != "azure_demo":
+            return
+        origin = urlparse(self.workbench_origin)
+        domain = self.preview_base_domain.lower().strip(".")
+        if not self.trusted_demo or not self.database_url:
+            raise RuntimeError("Azure 受信演示须显式启用并配置 PostgreSQL")
+        if (origin.scheme != "https" or not origin.hostname or origin.netloc != origin.hostname
+                or origin.path not in {"", "/"} or origin.query or origin.fragment):
+            raise RuntimeError("Azure 工作台必须配置 HTTPS 单一 origin")
+        if (not re.fullmatch(r"[a-z0-9]+(?:[.-][a-z0-9]+)+", domain)
+                or origin.hostname == domain or origin.hostname.endswith("." + domain)):
+            raise RuntimeError("预览域须与工作台分离，且配置可用的独立域名")
+        if not os.path.ismount(self.data_dir):
+            raise RuntimeError("Azure data/ 必须是已挂载的持久 Azure Files 卷")
 
     @property
     def app_db(self) -> Path:

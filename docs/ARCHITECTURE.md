@@ -1,6 +1,6 @@
 # MYATOM 系统架构（v0.1）
 
-状态：设计基线，2026-10-30；2026-10-31 按用户确认的 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 修订生成交付物边界；2026-11-01 按 [ADR-006](decisions/ADR-006-single-main-run-scope.md) 收束为单次主线交付，并按 [ADR-010](decisions/ADR-010-structured-card-single-send.md) 增加当前等待卡的消息解释层。公开交付主路径已按 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md) 选定 GitHub → Azure，生产适配尚未完成；Atoms Spike 仅保留可选迁移证据。产品范围见 [PRD](PRD.md)，固定与待定边界见 [ADR-001](decisions/ADR-001-baseline.md)，冲突处理见 [ADR-002](decisions/ADR-002-change-control.md)。
+状态：设计基线，2026-10-30；2026-10-31 按用户确认的 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 修订生成交付物边界；2026-11-01 按 [ADR-006](decisions/ADR-006-single-main-run-scope.md) 收束为单次主线交付，并按 [ADR-010](decisions/ADR-010-structured-card-single-send.md) 增加当前等待卡的消息解释层。GitHub → Azure 路线按 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md) 选定，当前部署范围由 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md) 限定为受信演示；Atoms Spike 仅保留可选迁移证据。产品范围见 [PRD](PRD.md)，固定与待定边界见 [ADR-001](decisions/ADR-001-baseline.md)，冲突处理见 [ADR-002](decisions/ADR-002-change-control.md)。
 
 ## 1. 原则与系统边界
 
@@ -22,7 +22,7 @@ flowchart LR
   H --> M[模型服务适配器]
 ```
 
-本地使用 Python API 服务和受控 worker，默认 SQLite 保存平台记录与 checkpoint，项目产物存于非公开数据目录；也可在 `APP_ENV=local` 配置 `MYATOM_DATABASE_URL` 对 PostgreSQL 平台状态与 checkpoint 做开发验证。公开交付选择 GitHub → Azure：主 API、独立异常后台与隔离 Runner 分别部署；平台状态选择 Azure Database for PostgreSQL Flexible Server，交付文件选择私有 Azure Blob Storage，实施顺序和失败边界见 [ADR-017](decisions/ADR-017-azure-persistent-state-and-artifacts.md) 与 [迁移契约](AZURE-PERSISTENCE.md)。生产 Runner/预览和 Blob 运行时接线尚未完成，生产模式仍拒绝启动。Atoms Cloud 仅作为后续可选迁移研究。浏览器从不直接调用模型服务或读取服务器文件。
+本地使用 Python API 服务和受控 worker，默认 SQLite 保存平台记录与 checkpoint，项目产物存于非公开数据目录；也可在 `APP_ENV=local` 配置 `MYATOM_DATABASE_URL` 对 PostgreSQL 平台状态与 checkpoint 做开发验证。GitHub → Azure 当前按 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md) 采用**受信演示**：主 API 容器内构建，Azure Files 挂载 `/app/data`，平台状态选择 Azure Database for PostgreSQL Flexible Server；独立异常后台仍单独部署。它不提供代码执行隔离，只允许获授权用户访问；匿名公网生产模式仍拒绝启动。实施与未验证边界见 [Azure 持久化](AZURE-PERSISTENCE.md)。浏览器从不直接调用模型服务或读取服务器文件。
 
 下文的 `ProjectRepository`、checkpointer、事件表与异常库属于 **MYATOM 平台**，可以使用服务端数据库；生成交付物自己的业务数据限其预览 origin 下的 `localStorage`。同一项目跨版本保持稳定 origin，不同项目须使用隔离 origin；项目 ID 作为存储键前缀不能阻止同源代码读取其他项目的数据。生成交付物若包含后端，只能有一个进程、一个监听端口，且不得用服务端数据库/缓存保存业务数据；MYATOM 的主 API、预览网关、独立异常后台不计入该限额。
 
@@ -35,14 +35,14 @@ flowchart LR
 | `ProjectRepository` | 项目/会话/版本 CRUD、乐观版本检查、按 owner 查找 | SQLite；可选 PostgreSQL 开发适配 | Azure Database for PostgreSQL；真实数据库与多实例恢复待测 |
 | `CheckpointRepository` | 按 `thread_id` 恢复 LangGraph 状态 | SQLite checkpointer；可选 PostgreSQL `PostgresSaver` | PostgreSQL；重启恢复待实测 |
 | `EventLog` | 原子追加 `seq`、按 `after_seq` 回放 | SQLite；可选 PostgreSQL，后者锁定 run 行分配序号 | PostgreSQL；并发与故障恢复待实测 |
-| `ArtifactStore` | 按项目/运行/版本保存源码、构建日志、manifest | 本地非公开目录 | 私有 Azure Blob Storage；上传后 hash 对账、版本提交、权限与清理待测 |
+| `ArtifactStore` | 按项目/运行/版本保存源码、构建日志、manifest | 本地非公开目录 | Azure Files 挂载的 `/app/data`；重启读回、hash 对账与清理待测 |
 | `GeneratedAppStorage` | 在生成模板内封装带项目/应用命名空间的浏览器 `localStorage` 读写与格式校验；只存生成应用业务数据 | 预览 origin 的浏览器存储 | 同 origin 的 Web 存储；不使用平台 DB/SQL/缓存保存交付物业务数据 |
 | `ModelGateway` | 统一消息、结构化输出、token 用量、超时、取消 | 本地配置的模型 API | Azure 端服务密钥或经授权的临时用户 Key；DeepSeek/OpenAI 兼容性待测 |
 | `Runner` | 创建隔离工作区、构建/测试、限额、停止、清理 | 本地同宿主可信开发 | Azure 上独立受限执行单元候选；隔离证据未通过前不开放公网生成 |
 | `PreviewGateway` | 发布版本、返回受限 URL、停止/过期 | `.localhost` 项目独立 origin | HTTPS 项目稳定独立 origin 与生产会话机制；待实测 |
 | `SecretProvider` | 服务端按环境取凭证 | 本地环境配置 | Azure 托管密钥；禁止注入生成项目 |
 
-适配器不向上层暴露供应商数据库字段或模型专属消息格式。MYATOM 项目/会话/运行/版本与生成应用业务数据分属服务端和浏览器两个边界。Azure 环境从空库与空 Blob 容器开始，**不导入本机历史项目、记录、checkpoint 或产物**；本地环境继续独立保存原数据。浏览器业务数据不随部署路径或代码快照自动搬迁。
+适配器不向上层暴露供应商数据库字段或模型专属消息格式。MYATOM 项目/会话/运行/版本与生成应用业务数据分属服务端和浏览器两个边界。Azure 环境从空库与空 Azure Files 共享开始，**不导入本机历史项目、记录、checkpoint 或产物**；本地环境继续独立保存原数据。浏览器业务数据不随部署路径或代码快照自动搬迁。
 
 生成应用的持久化采用固定模板的 `GeneratedAppStorage` 适配：计划卡确定所需数据结构，Agent 写 React 页面与受控的本地读写逻辑，按命名空间/版本格式校验浏览器数据。预览网关须为每项目提供跨版本稳定、彼此隔离的 origin，才可同时验收刷新读回与跨项目隔离；预览不能调用主 Agent 管理 API，也不能持有数据库凭证或密钥。浏览器存储容量、清理存储、跨设备和旧版数据格式不兼容都需在产品中说明。生成应用后端为可选能力，最多一个进程/一个端口，只做不持久化业务数据的逻辑；超出范围的需求在计划卡中说明并要求缩减。
 
@@ -55,7 +55,7 @@ flowchart LR
 - `GET /api/projects/{id}/versions`、`GET /api/versions/{id}/preview` 查询产物与预览；`POST /api/runs/{id}/cancel` 请求取消。
 - 项目快照返回持久的 `active_version_id`；回滚命令携带目标 `version_id` 和幂等键，经项目权限与快照可用性校验后原子更新当前指向，不复制产物、不调用 Agent。具体路由由实现契约确定。
 
-生成应用的旧 `/data/{version_id}/{entity}` 服务端 CRUD 已移除。预览网关现在为每个项目使用 `p-<project_uuid>.localhost:8001` 独立 origin，同一项目版本复用该 origin；预览票据和会话仍由平台数据库管理，不承载生成应用业务数据。本地工作台从 `127.0.0.1` 跨站嵌入预览，`SameSite=Strict` Cookie 在 iframe 中不能用于授权：一次性、2 分钟票据兑换为 60 分钟会话后，网关将会话随机值放在版本限定的预览路径中，静态资源经同一路径校验。预览响应禁缓存和 Referer，服务禁访问日志；工作台“重新载入”重新签发票据。此路径仅用于本机可信开发环境，不作为公网访问设计。公网部署时需重新验证域名解析、HTTPS、令牌传递方式与浏览器存储隔离。
+生成应用的旧 `/data/{version_id}/{entity}` 服务端 CRUD 已移除。预览网关为每个项目使用独立 origin：本地是 `p-<project_uuid>.localhost:8001`，Azure 受信演示是 `p-<project_uuid>.<PREVIEW_BASE_DOMAIN>` 的 HTTPS 域；同一项目的版本复用 origin。预览票据和会话由平台数据库管理，不承载生成应用业务数据。跨站 iframe 不能依赖 `SameSite=Strict` Cookie 授权：一次性、2 分钟票据兑换为 60 分钟会话后，网关将随机会话值放在版本限定的预览路径中，静态资源经同一路径校验。响应禁缓存和 Referer，服务禁访问日志；工作台“重新载入”重新签发票据。该方案仅用于受信演示，Azure 域名解析、TLS、票据泄露边界和浏览器存储隔离仍须在实际环境验证，不作为匿名公网安全方案。
 
 连接层：SSE 建联后立即发送当前状态和游标，每 15 秒心跳（配置值）；断开时指数退避并加抖动重连，携带最后 `seq`；重连先补历史再接实时。刷新后以服务端状态为准，对话轮次由卡片事件、消息及解释结果、已提交决策和 run 终态重建；原始模型事件只用于诊断，不作为访客主界面时间线。SSE 失败可轮询回放 API。连接恢复先按 `submission_id` 对账解释状态，不因重连生成新消息或重提构建命令。API 身份与访问控制在 MVP1 可使用服务端签发的访客凭证；公开部署前必须证明项目之间不可互读，不把可猜测 ID 当授权。
 
@@ -183,7 +183,7 @@ API 读 run 时补充服务端 `active_elapsed_seconds` 与 `execution_running`�
 
 **Docker 可用时**：每 run 独立非 root 容器，资源/时长限制、只挂载工作区、默认无宿主网络及密钥，依赖下载阶段与运行阶段分离；预览通过独立 origin 和受限代理访问，禁止同源权限继承，设置 CSP、sandbox iframe、短期 URL 和反向代理路径检查。Docker 本身也需本地实测。
 
-**同宿主 fallback**：仅用于本地、可信操作者且不接受公开用户任意代码的短期开发；最小进程权限、独立目录、CPU/时间限制及不同 origin 只能减小风险，**不能视为安全沙箱**。在该模式下不公开交互式代码执行；线上必须有可信隔离 Runner，或把范围缩到不执行生成代码的静态受限预览（此时不能声称满足最终 Demo 的真实交互验收）。Atoms 是否提供足够的沙箱或可运行 Python 服务均未验证，见本机 Atoms Spike 过程记录。
+**同容器受信演示**：本地和 `APP_ENV=azure_demo` 均在 API 所在环境构建生成代码；最小进程权限、受控文件、时间限制及不同预览 origin 只能减小风险，**不能视为安全沙箱**。Azure 入口须由身份认证或 IP 允许列表限制为受信人员，单副本运行并实测未授权拒绝；若以后开放匿名用户生成，须增加隔离 Runner 并重新验收。Atoms 是否提供足够的沙箱或可运行 Python 服务均未验证，见本机 Atoms Spike 过程记录。
 
 ## 8. 运行风险与验证映射
 

@@ -72,11 +72,12 @@ def owner_hash(token: str) -> str:
 
 def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     settings = settings or Settings()
-    if settings.app_env not in {"local", "container_smoke"}:
-        raise RuntimeError("生产存储与隔离 Runner 尚未接入，拒绝启动公开 API")
+    if settings.app_env not in {"local", "container_smoke", "azure_demo"}:
+        raise RuntimeError("不支持的运行环境")
+    settings.validate_azure_demo()
     if settings.database_url:
-        if settings.app_env != "local":
-            raise RuntimeError("PostgreSQL 开发接入目前只允许本地运行；生产 Runner 与预览尚未完成")
+        if settings.app_env not in {"local", "azure_demo"}:
+            raise RuntimeError("当前运行环境不允许连接 PostgreSQL")
         from .postgres_store import PostgresStore
         from .preview_access import PostgresPreviewAccess
         store = PostgresStore(settings.database_url)
@@ -385,14 +386,16 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     def get_preview(version_id: str, request: Request):
         version = store.get_version(version_id)
         project_access(request, version["project_id"])
-        if settings.app_env != "local":
-            raise HTTPException(status_code=503, detail="当前环境尚无已验证的隔离预览服务")
+        if settings.app_env not in {"local", "azure_demo"}:
+            raise HTTPException(status_code=503, detail="当前环境尚无预览服务")
         dist = workflow.runner.artifact(version["project_id"], version["run_id"]) / "dist" / "index.html"
         if not dist.is_file():
             raise HTTPException(status_code=404, detail="该版本尚无可预览的构建产物")
         ticket, expires = preview_access.issue_ticket(version_id, version["project_id"])
-        return {"url": f"{preview_origin(version['project_id'], settings.preview_port)}/open/{version_id}?ticket={ticket}", "expires_at": expires,
-                "scope": "local_preview_only"}
+        origin = preview_origin(version["project_id"], settings.preview_port,
+                                settings.preview_base_domain if settings.app_env == "azure_demo" else "localhost")
+        return {"url": f"{origin}/open/{version_id}?ticket={ticket}", "expires_at": expires,
+                "scope": "trusted_azure_demo" if settings.app_env == "azure_demo" else "local_preview_only"}
 
     @app.get("/api/versions/{version_id}/files/{name:path}")
     def get_file(version_id: str, name: str, request: Request):
@@ -420,4 +423,4 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     return app
 
 
-app = create_app()
+app = create_app() if Settings().app_env != "azure_demo" else None

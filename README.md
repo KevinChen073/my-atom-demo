@@ -69,11 +69,11 @@ npm run build
 
 ## 当前能力与边界
 
-- 本地默认用 SQLite 保存项目、运行、决策、事件、版本和 LangGraph checkpoint；设置服务端 `MYATOM_DATABASE_URL` 后可在本地开发模式改用 PostgreSQL，先显式运行 `python -m backend.migrate_postgres` 升级到 v2。两种模式共用工作流代码，生成源码和构建产物仍在本地 `data/`；Azure 正式环境的 Blob、隔离 Runner 与预览尚未接通。数据库实施边界见 [Azure 持久化](docs/AZURE-PERSISTENCE.md)。同一访客凭证可刷新/重进恢复项目。
+- 本地默认用 SQLite 保存项目、运行、决策、事件、版本和 LangGraph checkpoint；设置服务端 `MYATOM_DATABASE_URL` 后可在本地开发模式改用 PostgreSQL，先显式运行 `python -m backend.migrate_postgres` 升级到 v2。Azure 受信演示使用 PostgreSQL 与挂载到 `/app/data` 的 Azure Files，构建也在主 API 容器；不搬迁本地历史数据。配置与验收见 [Azure 持久化](docs/AZURE-PERSISTENCE.md)。同一访客凭证可刷新/重进恢复项目。
 - 已有可用版本时，新需求自动从当前版本继承完整计划与源码快照；计划卡列出沿用、增加、调整或删除的功能，确认后优先修改指定文件。失败不会替换旧版。具体规则见 [ADR-019](docs/decisions/ADR-019-version-inheritance.md)。
 - 生成代码限固定 React+TS+Vite 模板：`src/App.tsx`、`src/app.css`、`src/hooks/useAppState.ts` 与根目录 `readme.md` 必需；额外组件在 `src/components/`、额外逻辑在 `src/hooks/`，最多 12 个生成文件。只有编译/类型等源码错误才自动修复，最多 60 轮；同错连续无进展或累计第 5 次出现会提前停止。
 - SSE 事件按游标回放。预览用短期票据打开已构建的真实应用，每项目使用稳定的独立 `.localhost` origin；生成应用的业务数据只在该预览域 `localStorage`。候选产物经构建及静态资源检查后才成为可用快照。每项目最多保留 5 版，回滚只持久切换当前版本指针；浏览器业务数据不随代码回滚。
 - V7 桌面壳包含新建项目首页、工作台、概览、文档、测试、发布六个 URL 视图。项目内四个状态页可直达并刷新恢复；同项目切页保留对话，跨项目切换先清除旧项目内容。当前视觉规则见 `design/design.md`、`design/token.json` 和 `web/src/v7.css`。
 - 桌面工作台的两条竖向分隔线可拖动，也可用方向键微调；布局宽度保存在当前浏览器的 localStorage。双击分隔线或点击侧栏“恢复默认布局”即可重置。
-- 本地 Runner 与宿主共享环境，双端口只提供浏览器 origin 隔离，不构成代码执行沙箱。仅供本机可信开发测试，不可把当前配置直接公开部署。公开访问需先完成隔离 Runner、预览网关和部署验收。
+- 本地和 Azure 受信演示的 Runner 与主 API 共享执行环境，不构成代码执行沙箱。Azure 模式必须限制入口为获授权人员，验证持久文件挂载、项目独立 HTTPS 预览域和重启读回；匿名公网用户生成需另建隔离 Runner。
 - 本仓库的 Git 远端地址为 [KevinChen073/my-atom-demo](https://github.com/KevinChen073/my-atom-demo.git)。当前文件由本地工作区管理，提交、推送和发布需另行授权。

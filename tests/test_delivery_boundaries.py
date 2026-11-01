@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import time
+import hashlib
 import socket
 import threading
 from pathlib import Path
@@ -20,6 +21,9 @@ from backend.settings import Settings
 from backend.store import Store
 from backend.workflow import classify_build_failure, normalize_clarification
 from tests.test_mvp1 import FakeModel, wait_status
+
+
+APPROVED_PLAN = '{"title":"计数器","features":["点击加一"],"acceptance":["点击后数字增加"]}'
 
 
 class ThreeCardModel(FakeModel):
@@ -111,7 +115,7 @@ def test_five_snapshots_and_persistent_pointer(tmp_path: Path):
     ids = []
     for number in range(6):
         run, _ = store.create_run(project["id"], f"需求 {number}", f"run-{number}")
-        store.update_run(run["id"], status="completed", phase="Done")
+        store.update_run(run["id"], status="completed", phase="Done", plan_json=APPROVED_PLAN)
         version, _ = store.commit_version(project["id"], run["id"], {"files": [], "build": {"ok": True}})
         ids.append(version["id"])
     versions = store.get_project(project["id"], owner_hash("owner"))["versions"]
@@ -130,8 +134,16 @@ def test_failed_preview_candidate_keeps_last_good_version(tmp_path: Path):
     with TestClient(app) as client:
         project_id = client.post("/api/projects", json={"title": "保留旧版"}).json()["id"]
         old_run, _ = app.state.store.create_run(project_id, "原有可用的计数器应用", "old-run")
-        app.state.store.update_run(old_run["id"], status="completed", phase="Done")
-        old_version, _ = app.state.store.commit_version(project_id, old_run["id"], {"files": [], "build": {"ok": True}})
+        app.state.store.update_run(old_run["id"], status="completed", phase="Done", plan_json=APPROVED_PLAN)
+        files = FakeModel().generate(old_run["id"], "code_loop", "seed", "", "")["files"]
+        entries = []
+        for name, content in files.items():
+            target = tmp_path / "artifacts" / project_id / old_run["id"] / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            data = content.encode("utf-8")
+            target.write_bytes(data)
+            entries.append({"path": name, "sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)})
+        old_version, _ = app.state.store.commit_version(project_id, old_run["id"], {"files": entries, "build": {"ok": True}})
         response = client.post(f"/api/projects/{project_id}/runs", json={"request_text": "做一个可以点击加一的新计数器应用"})
         assert response.status_code == 201
         run_id = response.json()["run"]["id"]
@@ -179,7 +191,7 @@ def test_browser_preview_origin_is_stable_within_project_and_isolated_across_pro
 
     def seed(project_id: str, number: int) -> str:
         run, _ = store.create_run(project_id, f"版本 {number} 的预览应用", f"{project_id}-{number}")
-        store.update_run(run["id"], status="completed", phase="Done")
+        store.update_run(run["id"], status="completed", phase="Done", plan_json=APPROVED_PLAN)
         version = store.save_version(project_id, run["id"], {"files": [], "build": {"ok": True}})
         root = tmp_path / "artifacts" / project_id / run["id"] / "dist"
         (root / "assets").mkdir(parents=True)
@@ -260,7 +272,7 @@ def test_browser_rollback_button_persists_current_version(tmp_path: Path):
     ids = []
     for number in range(2):
         run, _ = app.state.store.create_run(project["id"], f"Version {number} counter application", f"version-{number}")
-        app.state.store.update_run(run["id"], status="completed", phase="Done")
+        app.state.store.update_run(run["id"], status="completed", phase="Done", plan_json=APPROVED_PLAN)
         version, _ = app.state.store.commit_version(project["id"], run["id"],
             {"files": [], "build": {"ok": True, "steps": []}, "template": "react-vite-v3", "preview": {"status": "checked"}})
         ids.append(version["id"])
@@ -289,7 +301,8 @@ def test_browser_rollback_button_persists_current_version(tmp_path: Path):
                 assert picker.input_value() == ids[1]
                 picker.select_option(ids[0])
                 page.get_by_role("button", name="设为当前版本").click()
-                page.get_by_text("当前使用版本", exact=True).wait_for(state="visible")
+                page.get_by_role("button", name="设为当前版本").wait_for(state="hidden")
+                assert "当前" in picker.locator("option:checked").text_content()
                 assert app.state.store.get_project(project["id"], owner_hash("browser"))["active_version_id"] == ids[0]
                 page.reload()
                 assert page.get_by_label("选择生成版本").input_value() == ids[0]

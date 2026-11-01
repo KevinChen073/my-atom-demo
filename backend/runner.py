@@ -48,7 +48,7 @@ def sha256(data: bytes) -> str:
 
 
 class LocalRunner:
-    """Trusted local MVP1 build only. This is not a public code sandbox."""
+    """Trusted same-container build. This is not a public code sandbox."""
 
     def __init__(self, settings: Settings, store: Store):
         self.settings = settings
@@ -65,8 +65,8 @@ class LocalRunner:
         return self.settings.data_dir / "candidates" / run_id / digest[:24]
 
     def prepare(self, project_id: str, run_id: str) -> Path:
-        if self.settings.app_env != "local":
-            raise RuntimeError("MVP1 同宿主构建仅允许 APP_ENV=local")
+        if self.settings.app_env not in {"local", "azure_demo"} or (self.settings.app_env == "azure_demo" and not self.settings.trusted_demo):
+            raise RuntimeError("同宿主构建仅允许本地或显式启用的 Azure 受信演示环境")
         target = self.workspace(project_id, run_id)
         if not target.exists():
             target.parent.mkdir(parents=True, exist_ok=True)

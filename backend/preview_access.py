@@ -13,11 +13,13 @@ from uuid import UUID
 from .store import now
 
 
-def preview_host(project_id: str) -> str:
-    return f"p-{UUID(project_id).hex}.localhost"
+def preview_host(project_id: str, base_domain: str = "localhost") -> str:
+    return f"p-{UUID(project_id).hex}.{base_domain}"
 
 
-def preview_origin(project_id: str, port: int) -> str:
+def preview_origin(project_id: str, port: int, base_domain: str = "localhost") -> str:
+    if base_domain != "localhost":
+        return f"https://{preview_host(project_id, base_domain)}"
     return f"http://{preview_host(project_id)}:{port}"
 
 
