@@ -24,6 +24,6 @@
 | Schema | 用户确认 `my-atom-dev` 已迁移到 v2；Azure 门户只读查询 `SELECT 1 FROM dbo.myatom_schema_version WHERE version=2` 返回 1 行 |
 | 容器到 SQL | 容器内 `python -m backend.azure_sql_probe` 第一次返回数据库暂不可用；重试明确返回 SQL 防火墙拒绝出口 IP `20.239.117.15`。只读连接和应用数据读写尚未通过 |
 
-首次新镜像 `4055e56` 在已预置 Azure SQL 连接串的健康模式下启动退出（`RuntimeError: 当前运行环境不允许连接 Azure SQL`）。已恢复旧镜像、修复并通过新增的健康模式测试后重新发布。当前镜像保持健康检查模式；用户确认暂无独立 HTTPS 预览域。SQL 单 IP 防火墙规则尚未保存，等待网络访问变更确认。容器出口 IP 可能变化，单 IP 规则只用于当前冒烟，不是长期稳定的网络方案。
+首次新镜像 `4055e56` 在已预置 Azure SQL 连接串的健康模式下启动退出（`RuntimeError: 当前运行环境不允许连接 Azure SQL`）。已恢复旧镜像、修复并通过新增的健康模式测试后重新发布。当前镜像保持健康检查模式；用户确认暂无独立 HTTPS 预览域，并决定暂不修改 Azure SQL 防火墙。因此容器到 SQL 的连接冒烟暂停，不能据此声称 Azure SQL 接线通过。容器出口 IP 可能变化，单 IP 规则也不是长期稳定的网络方案。
 
 此镜像默认 `APP_ENV=container_smoke`。它没有启用工作台、Agent、Azure SQL、预览、模型密钥或版本文件持久化。根据 ADR-023，Azure SQL 的版本文本读写接线和端到端验收完成前，不得切换到 `azure_demo` 或把这个 URL 称为可用产品 Demo。当前 GHCR 包为公开可拉取；镜像中不得包含 `.env` 或密钥。
