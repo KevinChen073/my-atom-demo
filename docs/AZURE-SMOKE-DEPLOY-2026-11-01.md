@@ -71,3 +71,17 @@
 | 清除 | 点击“清除 Key”后刷新，API Key 输入框为空；测试字符串已从该测试浏览器清除。 |
 
 此次只证明线上浏览器保存、刷新读回与清除路径。未使用真实模型 Key，未执行模型连接、生成、预算停机或密钥在数据库及运行日志中的在线专项审计。共享 origin 预览脚本可能读取工作台 `localStorage`，因此仍限受信演示环境；完整交付验收继续按 [AZ-03～AZ-08](../tests/cases/DEPLOYMENT-AZURE.md)执行。
+
+## 2026-11-02 简化生成源码校验与 TypeScript 冒烟
+
+针对简单需求反复被 `src/App.tsx：状态与业务逻辑须放在 src/hooks/ 中` 拦截，按 [ADR-029](decisions/ADR-029-generated-source-layout-relaxation.md) 放宽状态布局要求，保留直接浏览器存储与禁止能力的确定性校验，并保留 `strict` TypeScript 构建。`deploy/azure-preparation` 提交 `992d9b640a4e56625a095dfb08e988734c377329` 已推送。
+
+| 检查项 | 实测结果 |
+| --- | --- |
+| 本地端到端假模型冒烟 | 仅生成 App.tsx、app.css、readme.md；App 内使用 `useState`、项目存储适配器和未使用草稿变量，源码校验、`tsc -b`、Vite 构建、版本入库通过，修复轮次为 0。 |
+| 定向回归 | 源码、交付边界、共享预览、构建诊断、MVP1 和异常用例：37 通过、1 跳过。跳过的是已被 ADR-026 取代的独立预览 origin 测试；现行共享预览测试通过。 |
+| GitHub 镜像 | [Azure demo image smoke](https://github.com/KevinChen073/my-atom-demo/actions/runs/41330201740)通过测试、Docker 构建、容器健康冒烟及 GHCR 发布；[PostgreSQL persistence smoke](https://github.com/KevinChen073/my-atom-demo/actions/runs/41330201674)通过。 |
+| Azure 修订 | 固定镜像 `ghcr.io/kevinchen073/my-atom-demo:smoke-992d9b640a4e56625a095dfb08e988734c377329` 部署为 `myatom-azure-check--0000011`；门户显示“正在运行(最大值)”、1 副本、100% 流量。 |
+| 在线入口 | [工作台](https://myatom-azure-check.kindrock-ede6f587.eastasia.azurecontainerapps.io/) HTTP 200；`/api/health` 返回 `ok=true`、`app_env=azure_demo`。 |
+
+本轮未用真实模型 Key 在线生成新应用，不能据此断言该输入在模型生成质量、浏览器交互和 Azure 版本恢复方面已经通过。先前停在人工修复卡的 run 不自动重启；用户明确继续后，新候选才按放宽后的规则校验。
