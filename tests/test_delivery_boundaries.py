@@ -89,22 +89,22 @@ def test_diagnosis_only_retries_source_errors():
     assert unknown["category"] == "build_unknown" and unknown["repairable"] is False
 
 
-def test_generated_layout_rejects_ui_storage_and_missing_hook(tmp_path: Path):
+def test_generated_layout_requires_css_import_and_blocks_direct_storage(tmp_path: Path):
     runner = LocalRunner(Settings(data_dir=tmp_path), None)
     runner.prepare = lambda *_: (_ for _ in ()).throw(RuntimeError("validation passed"))
     files = {
-        "src/App.tsx": "import './app.css'\nexport default function App() { return <main /> }",
+        "src/App.tsx": "export default function App() { return <main /> }",
         "src/app.css": "body { margin: 0 }",
         "src/hooks/useAppState.ts": "export function useAppState() { return null }",
         "readme.md": "# Test application",
     }
-    with pytest.raises(UnsafeSource, match="useAppState"):
+    with pytest.raises(UnsafeSource, match="app.css"):
         runner.write_generated("project", "run", files, 0)
     files["src/App.tsx"] = "import './app.css'\nimport { useAppState } from './hooks/useAppState'\nexport default function App() { useAppState(); return <main>数据保存在 localStorage；刷新后恢复。</main> }"
     with pytest.raises(RuntimeError, match="validation passed"):
         runner.write_generated("project", "run", files, 0)
     files["src/App.tsx"] = "import './app.css'\nimport { useAppState } from './hooks/useAppState'\nexport default function App() { useAppState(); localStorage.setItem('x', 'y'); return <main /> }"
-    with pytest.raises(UnsafeSource, match="src/hooks"):
+    with pytest.raises(UnsafeSource, match="不得直接访问浏览器存储"):
         runner.write_generated("project", "run", files, 0)
 
 
@@ -170,6 +170,7 @@ def test_failed_preview_candidate_keeps_last_good_version(tmp_path: Path):
         assert not (tmp_path / "artifacts" / project_id / run_id).exists()
 
 
+@pytest.mark.skip(reason="ADR-026 使用共享 origin；现行票据和项目归属由 test_shared_origin_preview.py 覆盖")
 def test_browser_preview_origin_is_stable_within_project_and_isolated_across_projects(tmp_path: Path):
     playwright = pytest.importorskip("playwright.sync_api")
     executable = next((p for p in (

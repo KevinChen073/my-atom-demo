@@ -417,7 +417,7 @@ class Workflow:
                   "同一项目跨版本复用该 origin。不得设计服务端业务 CRUD、SQL、缓存、外部接口或第三方库。"
                   "若需求要刷新后保留业务数据，data_model 必须逐项写明由 localStorage 保存的字段，acceptance 必须包含刷新读回；不能把数据模型留空或只写页面状态。"
                   "limitations 不得与前述存储方案冲突；浏览器清除存储或更换浏览器后数据无法恢复，业务数据不随代码版本回滚。"
-                  "源码采用 src/App.tsx 入口、src/app.css 样式入口，状态与业务逻辑在 src/hooks/，多组件在 src/components/；根目录 readme.md 描述项目。计划须具体可测试。")
+                  "源码采用 src/App.tsx 入口、src/app.css 样式入口；简单状态和业务逻辑可直接放在 App.tsx，复杂逻辑可拆到 src/hooks/，多组件可拆到 src/components/；根目录 readme.md 描述项目。计划须具体可测试。")
         if base_spec:
             system += ("这是对已保存版本的迭代。features 只列本轮新增功能；不要复写原功能。"
                        "如用户明确要求删除或替换旧功能，使用 removed_features 字符串数组、modified_features 对象（旧功能原文到新功能）；"

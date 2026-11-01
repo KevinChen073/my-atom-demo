@@ -108,6 +108,40 @@ def test_hook_count_feedback_includes_required_hook(tmp_path: Path):
                "hook 数量 5 个" in issue["detail"] and "最多 4 个" in issue["detail"] for issue in issues)
 
 
+class AppStateModel(FakeModel):
+    def generate(self, run_id, node, cache_key, system, user, *, max_tokens=4000):
+        if node != "code_loop":
+            return super().generate(run_id, node, cache_key, system, user, max_tokens=max_tokens)
+        return {"files": {
+            "src/App.tsx": (
+                "import { useState } from 'react'\n"
+                "import { generatedAppStorage } from './hooks/generatedAppStorage'\n"
+                "import './app.css'\n"
+                "export default function App() {\n"
+                " const [count, setCount] = useState(() => Number(generatedAppStorage.getItem('count') || '0'));\n"
+                " const [error, setError] = useState('');\n"
+                " const draftLabel = '可忽略的草稿变量';\n"
+                " function add() { const next = count + 1; try { generatedAppStorage.setItem('count', String(next)); setCount(next); setError('') } catch { setError('保存失败') } }\n"
+                " return <main><button onClick={add}>加一 {count}</button><p role=\"alert\">{error}</p></main>\n"
+                "}"),
+            "src/app.css": "body { margin: 0; font-family: sans-serif }",
+            "readme.md": "# 计数器\n计数存入项目浏览器存储。",
+        }}
+
+
+def test_app_state_without_generated_hook_passes_source_and_typescript_build(tmp_path: Path):
+    app = create_app(Settings(data_dir=tmp_path, model_api_key="test-only"), model=AppStateModel())
+    with TestClient(app) as client:
+        project_id, run_id = approved_run(client, "做一个可保存的计数器")
+        completed = wait_status(client, run_id, "completed", timeout=90)
+        assert completed["fix_rounds"] == 0
+        version = client.get(f"/api/projects/{project_id}").json()["versions"][0]
+        assert version["manifest"]["build"]["ok"] is True
+        paths = {file["path"] for file in version["manifest"]["files"]}
+        assert "src/hooks/useAppState.ts" not in paths
+        assert "src/App.tsx" in paths
+
+
 def test_generated_storage_adapter_is_allowed_but_direct_storage_is_rejected(tmp_path: Path):
     runner = LocalRunner(Settings(data_dir=tmp_path), Store(tmp_path / "app.sqlite3"))
     files = {
@@ -120,7 +154,8 @@ def test_generated_storage_adapter_is_allowed_but_direct_storage_is_rejected(tmp
     assert (runner.prepare("project", "run") / "src/hooks/generatedAppStorage.ts").is_file()
     bad = {**files, "src/hooks/useAppState.ts": "export function useAppState() { return localStorage.getItem('todos') }"}
     issues = runner.inspect_generated(bad)
-    assert any(issue["file"] == "src/hooks/useAppState.ts" and "不得直接访问浏览器存储" in issue["detail"] for issue in issues)
+    assert any(issue["file"] == "src/hooks/useAppState.ts" and issue["code"] == "unscoped_storage_access"
+               and "不得直接访问浏览器存储" in issue["detail"] for issue in issues)
     assert any(issue["file"] is None for issue in runner.inspect_generated({**files, "src/hooks/generatedAppStorage.ts": "export const generatedAppStorage = localStorage"}))
 
 

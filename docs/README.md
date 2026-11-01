@@ -23,6 +23,7 @@
 | [ADR-011](decisions/ADR-011-decision-turn-composer.md) | 当前卡与输入区同处一条对话、简要计划和键盘发送 |
 | [ADR-012](decisions/ADR-012-user-facing-run-progress.md) | 长任务按真实节点更新进展、执行计时与完成后折叠 |
 | [ADR-013](decisions/ADR-013-source-validation-targeted-repair.md) | 源码校验回路、按文件定向重生与共享修复预算 |
+| [ADR-029](decisions/ADR-029-generated-source-layout-relaxation.md) | 简单应用允许在 App/组件中使用状态和业务逻辑，保留真实 TypeScript 构建 |
 | [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md) | 已选定 GitHub → Azure 公开交付路线，生产适配仍待验收 |
 | [ADR-017](decisions/ADR-017-azure-persistent-state-and-artifacts.md) | 已被后续 ADR 取代的早期 Azure 持久化方案 |
 | [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md) | 历史 Azure Files 决定；同容器构建与受信访问边界仍有效 |

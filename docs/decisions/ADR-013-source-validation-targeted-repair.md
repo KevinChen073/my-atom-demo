@@ -3,6 +3,8 @@
 - 状态：Accepted（用户于 2026-11-01 确认）
 - 关联：[PRD](../PRD.md)、[系统架构](../ARCHITECTURE.md)、[ADR-002](ADR-002-change-control.md)、[ADR-009](ADR-009-build-repair-harness.md)、[源码修复用例](../../tests/cases/MVP1.md)。
 
+2026-11-02 补充：[ADR-029](ADR-029-generated-source-layout-relaxation.md) 取消 `App.tsx`/组件必须把状态放入 hook 及强制生成 `useAppState.ts` 的限制；本 ADR 的候选反馈、修复轮次和停机机制保持有效。
+
 ## 决定
 
 当前 `CodeLoop` 不是任意工具规划的 ReAct Agent。一次调用生成一份候选文件映射；独立的确定性 `ValidateSource` 检查候选，再通过 LangGraph Edge 决定构建、重新生成或停止。首次模型输入包含与 Runner 一致的文件范围、大小、导入、状态与持久化限制。模型建议不代替服务端校验。

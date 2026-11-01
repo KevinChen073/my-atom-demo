@@ -2,14 +2,14 @@
 
 状态：2026-10-31 草案。范围是首页三个示例需求及其生成产物；依据 [PRD](../../docs/PRD.md)、[架构](../../docs/ARCHITECTURE.md)、[MVP2 用例](MVP2.md)。生成端使用固定 React + TypeScript + Vite Web 模板。第三例明确为“小程序风格的移动 H5”，**不是原生微信小程序**。此处验收的是生成游戏的三套视觉皮肤；MYATOM 工作台双主题属于 MVP4，不与之混同。
 
-**当前口径**：按 [ADR-004](../../docs/decisions/ADR-004-generated-deliverable-boundaries.md) 与 [ADR-026](../../docs/decisions/ADR-026-shared-origin-project-storage.md)，生成应用业务数据只在工作台共享 origin 的 `localStorage`，以项目 UUID 为键前缀。当前代码仍按旧项目子域运行，目标迁移未完成。静态预览探针通过不等于浏览器交互通过；前缀不是安全隔离。
+**当前口径**：按 [ADR-004](../../docs/decisions/ADR-004-generated-deliverable-boundaries.md) 与 [ADR-026](../../docs/decisions/ADR-026-shared-origin-project-storage.md)，生成应用业务数据只在工作台共享 origin 的 `localStorage`，以项目 UUID 为键前缀。静态预览探针通过不等于浏览器交互通过；前缀不是安全隔离。
 
 ## 执行约定
 
 - 用全新访客身份、新建项目逐例验收；记录示例标题、实际填入的完整需求、澄清卡、批准计划、run/version、模型调用与修复轮次、构建日志、浏览器结果。不要直接批准与示例不符的计划。
 - 每例先做无付费的固定源码/假模型回归，再由已授权的真实模型 smoke 验证生成能力。假模型通过只能证明工作台链路和模板能力，不能证明真实模型会稳定生成该应用。
 - 只有 `completed`、构建日志通过、版本已保存、真实预览确实可操作、业务数据刷新仍在，才能记为完整通过。失败 run、最后源码的单独重建、静态页面截图分别单列。
-- 生成应用必含 `src/App.tsx`、`src/app.css`、`src/hooks/useAppState.ts`、根目录 `readme.md`；其他逻辑在 `src/hooks/`，组件在 `src/components/`。目标业务数据只用共享 origin 的项目 ID 前缀 `localStorage`，不调用服务端业务 CRUD 或外部接口。测试样例数据使用虚构名称。
+- 生成应用必含 `src/App.tsx`、`src/app.css`、根目录 `readme.md`；简单状态和逻辑可留在 App，复杂时再拆 `src/hooks/` 和 `src/components/`。目标业务数据只经 `generatedAppStorage` 适配器写入共享 origin 的项目 ID 前缀 `localStorage`，不调用服务端业务 CRUD 或外部接口。测试样例数据使用虚构名称。
 
 ## 首页示例 catalog
 

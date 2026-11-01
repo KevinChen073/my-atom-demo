@@ -36,7 +36,6 @@ STATE_UPDATER_BLOCK = re.compile(
 UPDATER_SIDE_EFFECT = re.compile(
     r"\b(?:createRecord|updateRecord|deleteRecord|listRecords|persist\w*|save\w*|sync\w*|set[A-Z]\w*)\s*\("
 )
-STORAGE_ACCESS = re.compile(r"\blocalStorage\s*(?:\.|\[|[,;)])")
 DIRECT_STORAGE_ACCESS = re.compile(r"\b(?:localStorage|sessionStorage)\s*(?:\.|\[|[,;)])|\b(?:window|globalThis)\s*\.\s*localStorage\b|\bStorage\s*\.\s*prototype\b")
 
 
@@ -105,8 +104,6 @@ class LocalRunner:
                     raise UnsafeSource(f"导入未生成的项目文件：{module}")
             if name == "src/App.tsx" and "export default" not in content:
                 raise UnsafeSource("缺少默认导出的 React 组件")
-            if name.startswith(("src/components/", "src/App.")) and re.search(r"\b(?:useState|useEffect|useReducer|useRef)\s*\(", content):
-                raise UnsafeSource("状态与业务逻辑须放在 src/hooks/ 中")
             for update in STATE_UPDATER_BLOCK.finditer(content):
                 if UPDATER_SIDE_EFFECT.search(update.group("body")):
                     raise UnsafeSource("React 状态更新函数中不能保存数据或调用其他 setState；请在事件处理函数中完成副作用")
@@ -132,16 +129,13 @@ class LocalRunner:
         if component_count > MAX_COMPONENTS:
             add("invalid_layout", None, f"组件数量 {component_count} 个，最多 {MAX_COMPONENTS} 个；请合并组件并重新生成完整文件映射")
         if hook_count > MAX_HOOKS:
-            add("invalid_layout", None, f"hook 数量 {hook_count} 个，包含必需的 useAppState.ts，最多 {MAX_HOOKS} 个；请合并逻辑并重新生成完整文件映射")
+            add("invalid_layout", None, f"hook 数量 {hook_count} 个，最多 {MAX_HOOKS} 个；请合并逻辑并重新生成完整文件映射")
         app_source = files.get("src/App.tsx")
-        if isinstance(app_source, str) and (not re.search(r"import\s+['\"]\./app\.css['\"]", app_source) or
-                                            not re.search(r"from\s+['\"]\./hooks/useAppState['\"]", app_source)):
-            add("invalid_layout", "src/App.tsx", "App.tsx 必须导入 app.css 与 useAppState hook")
+        if isinstance(app_source, str) and not re.search(r"import\s+['\"]\./app\.css['\"]", app_source):
+            add("invalid_layout", "src/App.tsx", "App.tsx 必须导入 app.css")
         for name, content in files.items():
             if not isinstance(name, str):
                 continue
-            if (name == "src/App.tsx" or name.startswith("src/components/")) and isinstance(content, str) and STORAGE_ACCESS.search(content):
-                add("ui_storage_access", name, "业务持久化逻辑只能写在 src/hooks/ 中")
             try:
                 self.validate_source(name, content, names)
             except UnsafeSource as exc:
