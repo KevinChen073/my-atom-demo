@@ -13,12 +13,6 @@ export const DEFAULT_MODEL: ModelConfig = {
 
 export function readSavedModelConfig(): ModelConfig | null {
   try {
-    if (!isLocalWorkbench) {
-      // Remove any value saved by an earlier cloud build. Shared-origin previews
-      // must not find a persistent model credential after a page refresh.
-      localStorage.removeItem(STORAGE_KEY)
-      return null
-    }
     const value = JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null')
     if (!value || !['deepseek', 'openai_compatible'].includes(value.provider)
       || typeof value.api_key !== 'string' || typeof value.base_url !== 'string'
@@ -29,17 +23,15 @@ export function readSavedModelConfig(): ModelConfig | null {
 
 let activeConfig: ModelConfig | null = readSavedModelConfig()
 export function currentModelConfig(): ModelConfig | null { return activeConfig }
-export function setActiveModelConfig(config: ModelConfig | null, persist = false): void {
-  activeConfig = config
-  if (!isLocalWorkbench) {
-    try { localStorage.removeItem(STORAGE_KEY) } catch { /* Storage may be disabled. */ }
-    return
+export function setActiveModelConfig(config: ModelConfig | null, persist = false): boolean {
+  if (persist) {
+    try {
+      if (config) localStorage.setItem(STORAGE_KEY, JSON.stringify(config))
+      else localStorage.removeItem(STORAGE_KEY)
+    } catch { return false }
   }
-  if (!persist) return
-  try {
-    if (config) localStorage.setItem(STORAGE_KEY, JSON.stringify(config))
-    else localStorage.removeItem(STORAGE_KEY)
-  } catch { /* Browser storage can be disabled; this run remains usable. */ }
+  activeConfig = config
+  return true
 }
 
 export function modelRequestHeader(): Record<string, string> {

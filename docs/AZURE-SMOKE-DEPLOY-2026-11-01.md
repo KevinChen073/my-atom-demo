@@ -41,3 +41,20 @@
 | 产物生成与预览 | 本地定向测试通过；Azure 在线未执行真实生成、构建、预览、回滚。不能以首页与项目读写冒烟声称端到端功能通过。 |
 
 上线截图存于过程资料 `D:/AI/ATOM笔试/evidence/myatom-azure-workbench-2026-11-01.png`，不包含在公开仓库中。此部署仍是受信演示：同源预览的项目 ID 前缀只做命名空间，不提供脚本安全隔离；主容器构建生成代码仅适用于受信输入。GitHub Actions 负责镜像发布，Azure 修订仍由门户手动切换。
+
+## 2026-11-02 Azure SQL 网络调整与冒烟
+
+用户按 [ADR-027](decisions/ADR-027-azure-sql-trusted-demo-network.md) 确认开启 SQL Server `my-atom` 的“允许 Azure 服务和资源访问此服务器”，随后移除 `myatom-container-egress-20261101` 单 IP 规则。门户第一次保存“服务器异常”时返回 `ajaxExtended call failed`，刷新确认未生效；第二次保存显示成功，刷新后开关仍开启。旧单 IP 规则删除也显示成功，刷新后仅保留原有本机管理客户端规则。设置截图留在过程资料 `D:/AI/ATOM笔试/evidence/azure-sql-access-applied-2026-11-02.png`，不进入公开仓库。
+
+在旧规则已移除、未改变 ACA 镜像与入口 IP 允许列表的条件下，在线冒烟结果如下：
+
+| 检查项 | 实测结果 |
+| --- | --- |
+| API 健康 | `/api/health` 返回 `ok=true`、`app_env=azure_demo` |
+| Azure SQL 基础写入 | 新访客会话 `POST /api/projects` 创建项目 `9da96c52-be22-4f39-bd9f-f73d9356c9e7` |
+| 同会话读回 | `GET /api/projects/{id}` 的 ID 一致；`GET /api/projects` 列表含该项目 |
+| 证明范围 | 当前容器在无旧单 IP 规则时仍能通过托管身份完成项目写读；不证明其他 Azure 身份不可访问数据库，也不证明容器重建后的版本和 checkpoint 恢复 |
+
+等待 Azure SQL 防火墙传播窗口后，再以新的访客会话重复健康检查、项目创建、详情读回和列表读回，均通过；复测项目为 `d7928e21-e3a8-4fba-bd05-53ac8d682719`。这样减少旧规则短时缓存造成误判的可能。未更换容器修订，不能以此代替重建后恢复测试。
+
+完整生成、构建、预览、回滚、异常后台与未授权入口拒绝仍按 [AZ-03～AZ-08](../tests/cases/DEPLOYMENT-AZURE.md)执行。项目冒烟没有调用模型，也没有读取或记录用户的模型 Key。

@@ -1,6 +1,6 @@
 # MYATOM 系统架构（v0.1）
 
-状态：设计基线，2026-10-30；2026-10-31 按用户确认的 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 修订生成交付物边界；2026-11-01 按 [ADR-006](decisions/ADR-006-single-main-run-scope.md) 收束为单次主线交付，并按 [ADR-010](decisions/ADR-010-structured-card-single-send.md) 增加当前等待卡的消息解释层。GitHub → Azure 路线按 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md) 选定，受信演示边界见 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)，Azure SQL 数据库决定见 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md)，版本文本存储见 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md)；本地 SQLite 版本存储与用户模型 Key 见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)、[ADR-025](decisions/ADR-025-browser-model-settings.md)。2026-11-01 用户以 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) 将每项目独立预览 origin 改为共享 origin 与项目 ID 键前缀；本地代码已迁移，Azure 在线验收待执行。产品范围见 [PRD](PRD.md)，冲突处理见 [ADR-002](decisions/ADR-002-change-control.md)。
+状态：设计基线，2026-10-30；2026-10-31 按用户确认的 [ADR-004](decisions/ADR-004-generated-deliverable-boundaries.md) 修订生成交付物边界；2026-11-01 按 [ADR-006](decisions/ADR-006-single-main-run-scope.md) 收束为单次主线交付，并按 [ADR-010](decisions/ADR-010-structured-card-single-send.md) 增加当前等待卡的消息解释层。GitHub → Azure 路线按 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md) 选定，受信演示边界见 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)，Azure SQL 数据库决定见 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md)，版本文本存储见 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md)；本地 SQLite 版本存储见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)；用户模型 Key 当前规则见 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)，历史决定见 [ADR-025](decisions/ADR-025-browser-model-settings.md)。2026-11-01 用户以 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) 将每项目独立预览 origin 改为共享 origin 与项目 ID 键前缀；2026-11-02 按 [ADR-027](decisions/ADR-027-azure-sql-trusted-demo-network.md) 调整 Azure SQL 受信演示网络访问。产品范围见 [PRD](PRD.md)，冲突处理见 [ADR-002](decisions/ADR-002-change-control.md)。
 
 ## 1. 原则与系统边界
 
@@ -22,7 +22,7 @@ flowchart LR
   H --> M[模型服务适配器]
 ```
 
-本地使用 Python API 服务和受控 worker，SQLite 保存平台记录、checkpoint、预览票据及完整版本文件，见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)。Azure 按 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 与 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 采用**受信演示**：主 API 容器内构建，容器自身 `/app/data` 只作临时工作区；平台记录、LangGraph checkpoint 与已提交版本的文本文件统一使用 Azure SQL；独立异常后台仍单独部署。旧镜像已在 Azure `container_smoke` 健康模式启动，容器到 Azure SQL 的只读 schema v2 探针已通过；完整 Azure 跨重启验收未通过。它不提供代码执行隔离，只允许获授权用户访问；匿名公网生产模式仍拒绝启动。实施与未验证边界见 [Azure 持久化](AZURE-PERSISTENCE.md)。浏览器不直接调用模型服务或读取服务器文件；本地模型设置接口可在严格 loopback 条件下返回 `.env` Key，Azure 页面仅在当前会话内存保留用户 Key，见 [ADR-025](decisions/ADR-025-browser-model-settings.md)。
+本地使用 Python API 服务和受控 worker，SQLite 保存平台记录、checkpoint、预览票据及完整版本文件，见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)。Azure 按 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 与 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 采用**受信演示**：主 API 容器内构建，容器自身 `/app/data` 只作临时工作区；平台记录、LangGraph checkpoint 与已提交版本的文本文件统一使用 Azure SQL；独立异常后台仍单独部署。`azure_demo` 完整工作台已上线；[ADR-027](decisions/ADR-027-azure-sql-trusted-demo-network.md) 采用允许 Azure 服务访问 SQL 的服务器规则，旧容器出口单 IP 规则已移除，项目创建与读回冒烟通过；完整 Azure 跨重启验收未通过。它不提供代码执行隔离，只允许获授权用户访问；匿名公网生产模式仍拒绝启动。实施与未验证边界见 [Azure 持久化](AZURE-PERSISTENCE.md)。浏览器不直接调用模型服务或读取服务器文件；本地模型设置接口可在严格 loopback 条件下返回 `.env` Key，两端均在用户点击保存后将 Key 写入当前浏览器的 `localStorage`，见 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。
 
 下文的 `ProjectRepository`、checkpointer、事件表与异常库属于 **MYATOM 平台**，可以使用服务端数据库；生成交付物自己的业务数据限工作台共享 origin 下的浏览器 `localStorage`，键名前缀为 `myatom.app.<项目 UUID>.`。同一项目跨版本复用前缀；不同项目在正常读写路径中避免键名冲突，但同源代码可读写其他项目键和工作台保存的模型 Key，前缀不构成安全边界。见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md)。生成交付物若包含后端，只能有一个进程、一个监听端口，且不得用服务端数据库/缓存保存业务数据；MYATOM 的主 API、预览网关、独立异常后台不计入该限额。
 
@@ -60,7 +60,7 @@ flowchart LR
 
 提交事务先校验当前版本仍为本 run 固定的基线，再写全部文件行和版本记录、切换当前指针、淘汰第 6 版的旧文件行；任何步骤失败整体回滚。预览仅按获授权 `version_id/path` 查询文本并设置正确 MIME、CSP 与无缓存头；SQL 不可用时返回明确错误，不能用旧容器缓存冒充可用版本。v1 已有文件仅在本地磁盘的旧版本必须检测并导入或标记不可用，不能只升级表结构后宣称可回滚。该事务与读取路径在当前代码中尚未接线。
 
-生成应用的持久化采用固定模板的 `GeneratedAppStorage` 适配：计划卡确定所需数据结构，Agent 写 React 页面与受控的本地读写逻辑，按项目 UUID 前缀与键名格式校验浏览器数据，不允许无前缀键或 `localStorage.clear()`。预览网关已实现工作台同 origin 的共享路径；它只能保证服务端版本文件访问校验，不能阻止同源生成代码访问工作台脚本、API 与其他项目存储。用户已按 [ADR-025](decisions/ADR-025-browser-model-settings.md) 选择 Azure 仅当前页面会话内存保留 Key，本地 loopback 可保存在 `localStorage`；同源运行时仍不能称为凭证安全隔离。浏览器存储容量、清理存储、跨设备和旧版数据格式不兼容都需在产品中说明。生成应用后端为可选能力，最多一个进程/一个端口，只做不持久化业务数据的逻辑；超出范围的需求在计划卡中说明并要求缩减。
+生成应用的持久化采用固定模板的 `GeneratedAppStorage` 适配：计划卡确定所需数据结构，Agent 写 React 页面与受控的本地读写逻辑，按项目 UUID 前缀与键名格式校验浏览器数据，不允许无前缀键或 `localStorage.clear()`。预览网关已实现工作台同 origin 的共享路径；它只能保证服务端版本文件访问校验，不能阻止同源生成代码访问工作台脚本、API 与其他项目存储。用户已按 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md) 选择两端均点击保存后持久化到当前浏览器 `localStorage`；同源预览脚本可能读取保存键，不能称为凭证安全隔离。浏览器存储容量、清理存储、跨设备和旧版数据格式不兼容都需在产品中说明。生成应用后端为可选能力，最多一个进程/一个端口，只做不持久化业务数据的逻辑；超出范围的需求在计划卡中说明并要求缩减。
 
 ## 3. API、会话与事件
 
@@ -199,7 +199,7 @@ API 读 run 时补充服务端 `active_elapsed_seconds` 与 `execution_running`�
 
 **Docker 可用时**：每 run 独立非 root 容器，资源/时长限制、只挂载工作区、默认无宿主网络及密钥，依赖下载阶段与运行阶段分离；构建执行与服务端数据边界仍需单独验证。当前共享 origin 预览方案没有浏览器跨项目安全隔离；若以后要求公开运行不可信生成代码，必须重新设计独立 origin 或等效可信浏览器边界、受限代理、CSP 与短期 URL。Docker 本身也需本地实测。
 
-**同容器受信演示**：本地和 `APP_ENV=azure_demo` 均在 API 所在环境构建生成代码；最小进程权限、受控文件和时间限制只能减小风险，**不能视为安全沙箱**。共享 origin 使其他项目业务数据可被同源预览脚本读取；Azure 的模型 Key 仅留在当前页面内存，减少持久泄露，但不提供同源脚本运行时隔离。Azure 入口须由身份认证或 IP 允许列表限制为受信人员，单副本运行并实测未授权拒绝。若以后开放匿名用户生成，须增加隔离 Runner、浏览器 origin 边界并重新验收。Atoms 是否提供足够的沙箱或可运行 Python 服务均未验证，见本机 Atoms Spike 过程记录。
+**同容器受信演示**：本地和 `APP_ENV=azure_demo` 均在 API 所在环境构建生成代码；最小进程权限、受控文件和时间限制只能减小风险，**不能视为安全沙箱**。共享 origin 使其他项目业务数据可被同源预览脚本读取；两端的模型 Key 点击保存后均持久留在共享 origin 的浏览器存储中；同源预览脚本可能读取，刷新也不会清除。Azure 入口须由身份认证或 IP 允许列表限制为受信人员，单副本运行并实测未授权拒绝。若以后开放匿名用户生成，须增加隔离 Runner、浏览器 origin 边界并重新验收。Atoms 是否提供足够的沙箱或可运行 Python 服务均未验证，见本机 Atoms Spike 过程记录。
 
 ## 8. 运行风险与验证映射
 

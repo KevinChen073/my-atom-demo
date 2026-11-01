@@ -46,7 +46,8 @@ export function ModelSettings({ onChange }: { onChange: (config: ModelConfig | n
     const issue = validate()
     if (issue) { setError(issue); return }
     const next = { ...config, api_key: config.api_key.trim(), base_url: config.base_url.trim().replace(/\/$/, ''), model_name: config.model_name.trim() }
-    setActiveModelConfig(next, true); onChange(next); setOpen(false)
+    if (!setActiveModelConfig(next, true)) { setError('浏览器无法保存 Key。请检查站点存储权限或可用空间。'); return }
+    onChange(next); setOpen(false)
   }
   async function test() {
     const issue = validate()
@@ -61,8 +62,8 @@ export function ModelSettings({ onChange }: { onChange: (config: ModelConfig | n
     finally { setTesting(false) }
   }
   function clearKey() {
-    const cleared = { ...config, api_key: '' }
-    setActiveModelConfig(cleared, true); onChange(cleared); update({ api_key: '' })
+    if (!setActiveModelConfig(null, true)) { setError('浏览器无法清除已保存的 Key。请检查站点存储权限。'); return }
+    onChange(null); update({ api_key: '' })
   }
 
   const saved = currentModelConfig()
@@ -73,7 +74,7 @@ export function ModelSettings({ onChange }: { onChange: (config: ModelConfig | n
     {open && <div className="model-overlay" onMouseDown={event => { if (event.target === event.currentTarget) setOpen(false) }}>
       <div className="model-dialog" role="dialog" aria-modal="true" aria-labelledby="model-dialog-title">
         <div className="model-dialog-head"><h2 id="model-dialog-title">模型设置</h2><button type="button" onClick={() => setOpen(false)} aria-label="关闭模型设置">×</button></div>
-        <p>{isLocalWorkbench ? '使用自己的 API Key 调用模型。Key 可保存在当前浏览器，运行时发送给后端。共用电脑请在结束后清除 Key。' : '使用自己的 API Key 调用模型。Azure 演示中 Key 只在当前页面会话内使用，刷新后需重新填写；请勿在生成应用中输入敏感数据。'}</p>
+        <p>点击保存后，API Key 会存入当前浏览器，刷新后恢复。生成应用的预览与工作台同源，预览脚本可能读取此 Key；仅在受信环境使用，结束后请清除 Key。{isLocalWorkbench && '本地 .env Key 只作预填，未点击保存不会写入浏览器。'}</p>
         <label>服务类型</label><div className="model-provider-tabs">
           <button type="button" className={config.provider === 'deepseek' ? 'active' : ''} onClick={() => update({ provider: 'deepseek', base_url: 'https://api.deepseek.com', model_name: 'deepseek-chat' })}>DeepSeek</button>
           <button type="button" className={config.provider === 'openai_compatible' ? 'active' : ''} onClick={() => update({ provider: 'openai_compatible', base_url: 'https://api.openai.com/v1', model_name: 'gpt-4.1-mini' })}>OpenAI 兼容</button>
@@ -84,7 +85,7 @@ export function ModelSettings({ onChange }: { onChange: (config: ModelConfig | n
         <label htmlFor="model-name">模型名称</label><input id="model-name" value={config.model_name} onChange={event => update({ model_name: event.target.value })} />
         {config.provider === 'deepseek' && <div className="model-quick-options"><button type="button" onClick={() => update({ model_name: 'deepseek-chat' })}>deepseek-chat</button><button type="button" onClick={() => update({ model_name: 'deepseek-reasoner' })}>deepseek-reasoner</button></div>}
         {(error || testResult) && <p role="status" className={error ? 'model-error' : 'model-success'}>{error || testResult}</p>}
-        <div className="model-dialog-actions"><button type="button" onClick={clearKey}>清除 Key</button><span /><button type="button" onClick={test} disabled={testing}>{testing ? '测试中…' : '测试连接'}</button><button type="button" className="model-save" onClick={save}>{isLocalWorkbench ? '保存' : '本次使用'}</button></div>
+        <div className="model-dialog-actions"><button type="button" onClick={clearKey}>清除 Key</button><span /><button type="button" onClick={test} disabled={testing}>{testing ? '测试中…' : '测试连接'}</button><button type="button" className="model-save" onClick={save}>保存</button></div>
       </div>
     </div>}
   </>

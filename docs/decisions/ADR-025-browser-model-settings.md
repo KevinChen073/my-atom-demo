@@ -1,9 +1,11 @@
 # ADR-025：访客自行配置模型，本地可保存 Key
 
-- 状态：Accepted（2026-11-01，用户先选择本地浏览器保存方案，后明确选择 Azure 仅页面会话保存）；更新 [ADR-014](ADR-014-atoms-deployment-and-model-credentials.md) 的第 3、4 条模型凭证边界。
+- 状态：历史决定；Azure 仅页面内存保存的部分已于 2026-11-02 被 [ADR-028](ADR-028-browser-model-key-both-environments.md) 取代。本地 `.env` 预填与服务端不持久化 Key 的边界仍有效；曾更新 [ADR-014](ADR-014-atoms-deployment-and-model-credentials.md) 的第 3、4 条模型凭证边界。
 - 关联：[PRD](../PRD.md)、[架构](../ARCHITECTURE.md)、[根目录约束](../../AGENTS.md)。
 
 > 2026-11-01 修订：[ADR-026](ADR-026-shared-origin-project-storage.md) 取消每项目独立预览 origin 后，用户确认 Azure 不再将 Key 存入浏览器 `localStorage`；本地 loopback 仍可保存。Azure 旧版本留下的该键在工作台加载时删除。此举减少持久泄露面，但同源预览脚本仍可接触父页面和同源接口；仅可用于限制入口的受信演示。
+
+> 2026-11-02 后续决定：用户改为要求线上线下都在点击保存后写入 `localStorage`。以下 Azure 内存保存内容仅保留作历史记录；现行规则见 [ADR-028](ADR-028-browser-model-key-both-environments.md)。
 
 ## 决定
 

@@ -19,6 +19,13 @@ jobs:
           python-version: "3.11"
       - run: python -m pip install -r requirements-azure.txt pytest httpx
       - run: python -m pytest -q tests/test_azure_demo_runtime.py tests/test_azure_sql_adapter.py tests/test_azure_artifacts.py tests/test_azure_preview_files.py tests/test_azure_sql_migration.py tests/test_decision_idempotency.py
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      - run: npm ci && npm test
+        working-directory: web
       - run: docker build -t myatom-demo-smoke .
       - name: Verify health-only default container
         run: |

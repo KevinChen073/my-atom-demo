@@ -69,9 +69,9 @@ az containerapp up `
 | 平台状态 | 本地默认 SQLite；旧 PostgreSQL schema v2 用例在 CI 通过 | Azure 使用专用空 Azure SQL 库；平台 schema v1 与版本文本 schema v2 显式迁移、重启读回，独立异常后台只读查询；不搬本地历史 |
 | 文件与 Runner | 本地 `data/`；同宿主 Runner；镜像已加入 Node/npm 并通过健康模式容器冒烟，尚未在容器内运行生成构建 | Azure SQL `version_files` 保存受控源码与文本构建资源；容器 `/app/data` 只作临时工作区，不配置外部挂载。验证重启后从 SQL 预览/回滚/迭代；仅在受信演示环境同容器构建，单副本/单 worker，绝非安全沙箱 |
 | 预览与入口 | 本地同源 `/preview/...` 路由、票据与项目 ID 注入定向测试通过 | Azure 默认 HTTPS FQDN 同 origin 的 `/preview/...` 路径与 `myatom.app.<项目 UUID>.*` 存储前缀；需在线验证票据/刷新读回及入口认证/IP 允许列表。前缀不构成安全隔离，详见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) |
-| 模型与密钥 | 工作台可输入 DeepSeek / OpenAI 兼容 API Key，本地 `.env` 可预填 | Azure 用户 Key 仅留在当前页面会话内存，刷新后重填；本地可保存到浏览器，见 [ADR-025](decisions/ADR-025-browser-model-settings.md)。主 API 不持久保存 Key；真实模型测试需用户提供测试 Key |
+| 模型与密钥 | 工作台可输入 DeepSeek / OpenAI 兼容 API Key，本地 `.env` 可预填 | 本地与 Azure 均在点击保存后将用户 Key 写入当前浏览器 `localStorage`，刷新后恢复；见 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。主 API 不持久保存 Key；真实模型测试需用户提供测试 Key |
 
-受信演示配置为 `APP_ENV=azure_demo`、`MYATOM_TRUSTED_DEMO=1`、`MYATOM_AZURE_SQL_CONNECTION_STRING`、`WORKBENCH_ORIGIN`（Container Apps 默认 HTTPS FQDN）、`MYATOM_DATA_DIR=/app/data`；不需要 `PREVIEW_BASE_DOMAIN`。同源路由本地定向测试通过，Azure 首页已打开，真实产物预览仍待验证。用户在工作台填写模型 Key，服务器 `MODEL_API_KEY` 不设置；Azure 页面刷新后清除 Key，同源运行时风险见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md)。Azure SQL 连接加密并验证证书，不设置 `MYATOM_DATABASE_URL`。入口 IP 允许列表已配置，但从非允许 IP 的拒绝响应尚未实测。实际访问参数和凭证不写进仓库。
+受信演示配置为 `APP_ENV=azure_demo`、`MYATOM_TRUSTED_DEMO=1`、`MYATOM_AZURE_SQL_CONNECTION_STRING`、`WORKBENCH_ORIGIN`（Container Apps 默认 HTTPS FQDN）、`MYATOM_DATA_DIR=/app/data`；不需要 `PREVIEW_BASE_DOMAIN`。同源路由本地定向测试通过，Azure 首页已打开，真实产物预览仍待验证。用户在工作台填写模型 Key，服务器 `MODEL_API_KEY` 不设置；Azure 页面刷新后恢复已保存 Key；同源预览脚本可读取这一保存键，风险见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) 与 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。Azure SQL 连接加密并验证证书，不设置 `MYATOM_DATABASE_URL`。入口 IP 允许列表已配置，但从非允许 IP 的拒绝响应尚未实测。实际访问参数和凭证不写进仓库。
 
 ### 3.1.1 容器临时工作区与运行参数
 
@@ -122,4 +122,4 @@ az containerapp up `
 
 ## 本文未验证的边界
 
-这份指南核对了 Azure 官方操作步骤与当前仓库结构；GitHub 部署分支已推送，复用现有 Azure 容器应用，没有创建额外云资源。本机未检测到 Azure CLI。容器托管身份 Azure SQL 连接已通过在线项目创建与读回冒烟。未验证的仍有容器替换后读回、交付物版本文件、真实模型生成与预览、从未授权 IP 拒绝请求、独立异常后台；GitHub 到 Azure 的自动更新尚未配置。单 IP SQL 防火墙规则会随容器出口 IP 变化而失效。
+这份指南核对了 Azure 官方操作步骤与当前仓库结构；GitHub 部署分支已推送，复用现有 Azure 容器应用，没有创建额外云资源。本机未检测到 Azure CLI。容器托管身份 Azure SQL 连接已通过在线项目创建与读回冒烟。2026-11-02 按 [ADR-027](decisions/ADR-027-azure-sql-trusted-demo-network.md) 开启 SQL Server 的“允许 Azure 服务和资源访问此服务器”，移除旧容器出口单 IP 规则后再次通过基础读写冒烟。该开关允许所有 Azure 订阅中的资源尝试连接 SQL，须维持数据库身份权限与工作台入口限制；不作为生产网络方案。未验证的仍有容器替换后读回、交付物版本文件、真实模型生成与预览、从未授权 IP 拒绝请求、独立异常后台；GitHub 到 Azure 的自动更新尚未配置。
