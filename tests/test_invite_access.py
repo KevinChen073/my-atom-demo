@@ -24,8 +24,7 @@ def _app(tmp_path: Path, monkeypatch, *, server_key: str = SERVER_KEY):
     monkeypatch.setattr(Settings, "validate_azure_demo", lambda self: None)
     settings = Settings(data_dir=tmp_path, app_env="azure_demo", model_api_key=server_key,
                         workbench_origin="https://app.example.com",
-                        invite_code_hashes=",".join((InviteAuth.digest(CODE_A), InviteAuth.digest(CODE_B))),
-                        invite_session_secret="test-session-secret-with-at-least-32-characters")
+                        invite_code=CODE_A)
     app = create_app(settings)
     app.state.workflow.enqueue = lambda _run_id: None
     return app
@@ -57,9 +56,9 @@ def test_invitation_is_the_only_platform_key_grant_and_recovers_projects(tmp_pat
         assert device_two.post("/api/auth/invite", json={"code": CODE_A}).status_code == 200
         assert [item["id"] for item in device_two.get("/api/projects").json()["projects"]] == [invited_project["id"]]
         assert device_two.get(f"/api/projects/{invited_project['id']}").status_code == 200
-        assert other.post("/api/auth/invite", json={"code": CODE_B}).status_code == 200
-        assert other.get(f"/api/projects/{invited_project['id']}").status_code == 404
-        assert other.get(f"/api/runs/{run_id}").status_code == 404
+        assert other.post("/api/auth/invite", json={"code": CODE_B}).status_code == 401
+        assert other.get(f"/api/projects/{invited_project['id']}").status_code == 401
+        assert other.get(f"/api/runs/{run_id}").status_code == 401
         assert visitor.post("/api/auth/logout").status_code == 200
         assert visitor.get(f"/api/projects/{invited_project['id']}").status_code == 401
         assert visitor.get(f"/api/runs/{run_id}").status_code == 401
@@ -103,7 +102,7 @@ def test_preview_ticket_and_session_stay_with_invitation_space(tmp_path: Path, m
     with TestClient(app, base_url="https://app.example.com") as alpha, \
          TestClient(app, base_url="https://app.example.com") as beta:
         assert alpha.post("/api/auth/invite", json={"code": CODE_A}).status_code == 200
-        assert beta.post("/api/auth/invite", json={"code": CODE_B}).status_code == 200
+        assert beta.post("/api/auth/invite", json={"code": CODE_B}).status_code == 401
         project = alpha.post("/api/projects", json={"title": "A project"}).json()
         run = alpha.post(f"/api/projects/{project['id']}/runs",
                          json={"request_text": "Please create a small application"}).json()["run"]
@@ -114,10 +113,10 @@ def test_preview_ticket_and_session_stay_with_invitation_space(tmp_path: Path, m
             {"template": "react-vite-v4", "files": [], "build_files": [entry], "build": {"ok": True}},
             [{**entry, "content": content, "utf8_bytes": len(data), "kind": "dist", "mime_type": "text/html"}])
         ticket_url = alpha.get(f"/api/versions/{version['id']}/preview").json()["url"]
-        assert beta.get(ticket_url, follow_redirects=False).status_code == 404
+        assert beta.get(ticket_url, follow_redirects=False).status_code == 401
         opened = alpha.get(ticket_url, follow_redirects=False)
         assert opened.status_code == 303
-        assert beta.get(opened.headers["location"]).status_code == 404
+        assert beta.get(opened.headers["location"]).status_code == 401
         assert alpha.get(opened.headers["location"]).status_code == 200
 
 
@@ -127,8 +126,7 @@ def test_azure_model_gateway_never_falls_back_to_ungranted_server_key(tmp_path: 
     project = store.create_project("owner", "test")
     run, _ = store.create_run(project["id"], "make a small app", "one")
     settings = Settings(data_dir=tmp_path, app_env="azure_demo", model_api_key=SERVER_KEY,
-                        invite_code_hashes=InviteAuth.digest(CODE_A),
-                        invite_session_secret="test-session-secret-with-at-least-32-characters")
+                        invite_code=CODE_A)
     gateway = ModelGateway(settings, store)
     with pytest.raises(RuntimeError, match="邀请码"):
         gateway.generate(run["id"], "plan", "key", "system", "user")
@@ -147,7 +145,7 @@ def test_invitation_daily_call_quota_blocks_next_model_attempt(tmp_path: Path):
     project = store.create_project(InviteAuth.owner(code_hash), "test")
     run, _ = store.create_run(project["id"], "make a small app", "one")
     gateway = ModelGateway(Settings(data_dir=tmp_path, app_env="azure_demo", model_api_key=SERVER_KEY,
-        invite_code_hashes=code_hash, invite_session_secret="test-session-secret-with-at-least-32-characters",
+        invite_code=CODE_A,
         invite_daily_model_calls=1), store)
     gateway.configure_platform_run(run["id"], code_hash)
     gateway.check_platform_quota(code_hash)
@@ -177,7 +175,7 @@ def test_only_invited_run_reaches_server_model_key(tmp_path: Path, monkeypatch):
     project = store.create_project(InviteAuth.owner(code_hash), "test")
     ungranted, _ = store.create_run(project["id"], "make a small app", "one")
     gateway = ModelGateway(Settings(data_dir=tmp_path, app_env="azure_demo", model_api_key=SERVER_KEY,
-        invite_code_hashes=code_hash, invite_session_secret="test-session-secret-with-at-least-32-characters"), store)
+        invite_code=CODE_A), store)
     with pytest.raises(RuntimeError, match="邀请码"):
         gateway.generate(ungranted["id"], "plan", "one", "system", "user")
     assert seen_calls == []
@@ -188,10 +186,10 @@ def test_only_invited_run_reaches_server_model_key(tmp_path: Path, monkeypatch):
 
 
 def test_invalid_session_and_rate_limit():
-    auth = InviteAuth(InviteAuth.digest(CODE_A), "test-session-secret-with-at-least-32-characters")
+    auth = InviteAuth(CODE_A)
     token = auth.issue(InviteAuth.digest(CODE_A))
     assert auth.verify(token) == InviteAuth.digest(CODE_A)
-    assert InviteAuth(InviteAuth.digest(CODE_B), "test-session-secret-with-at-least-32-characters").verify(token) is None
+    assert InviteAuth(CODE_B).verify(token) is None
     assert auth.verify(token[:-1] + ("0" if token[-1] != "0" else "1")) is None
     for _ in range(5):
         assert auth.authenticate("incorrect-invitation-code-long-enough", "198.51.100.1") is None

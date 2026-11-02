@@ -42,7 +42,7 @@ class ModelGateway:
         self._run_credentials: dict[str, ModelCredentials] = {}
         self._credentials_lock = threading.Lock()
         from .invite_auth import InviteAuth
-        self._invite_hashes = InviteAuth(settings.invite_code_hashes, settings.invite_session_secret).allowed
+        self._invite_hashes = InviteAuth(settings.invite_code).allowed
 
     def configure_platform_run(self, run_id: str, invite_hash: str) -> None:
         if invite_hash not in self._invite_hashes or not self.settings.model_api_key:

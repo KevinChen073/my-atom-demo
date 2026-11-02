@@ -36,7 +36,7 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
         store = Store(settings.app_db)
         access = PreviewAccess(settings.data_dir / "preview_access.sqlite3")
     app = FastAPI(title="MYATOM local preview", docs_url=None, redoc_url=None, openapi_url=None)
-    invite_auth = InviteAuth(settings.invite_code_hashes, settings.invite_session_secret)
+    invite_auth = InviteAuth(settings.invite_code)
 
     def require_invite_project(request: Request, project_id: str) -> None:
         if settings.app_env != "azure_demo":

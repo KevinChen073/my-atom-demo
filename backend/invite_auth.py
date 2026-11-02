@@ -6,20 +6,18 @@ import base64
 import hashlib
 import hmac
 import json
-import re
 import threading
 import time
 from collections import defaultdict
 
 
 class InviteAuth:
-    def __init__(self, code_hashes: str, session_secret: str):
-        self.allowed = frozenset(part.strip().lower() for part in code_hashes.split(",") if part.strip())
-        if any(not re.fullmatch(r"[0-9a-f]{64}", value) for value in self.allowed):
-            raise RuntimeError("邀请码配置必须是 SHA-256 摘要列表")
-        if self.allowed and len(session_secret) < 32:
-            raise RuntimeError("邀请码会话密钥至少需要 32 个字符")
-        self._secret = session_secret.encode("utf-8")
+    def __init__(self, code: str):
+        if code and not 24 <= len(code) <= 256:
+            raise RuntimeError("邀请码须为 24 至 256 个字符的随机码")
+        self._code = code
+        self.allowed = frozenset({self.digest(code)}) if code else frozenset()
+        self._secret = code.encode("utf-8")
         self._failures: dict[str, list[float]] = defaultdict(list)
         self._lock = threading.Lock()
 
@@ -38,15 +36,14 @@ class InviteAuth:
             self._failures[address] = failures
             if len(failures) >= 5:
                 return None
-        digest = self.digest(code) if 24 <= len(code) <= 256 else ""
-        valid = any(hmac.compare_digest(digest, allowed) for allowed in self.allowed)
+        valid = bool(self._code) and hmac.compare_digest(code, self._code)
         if not valid:
             with self._lock:
                 self._failures[address].append(now)
             return None
         with self._lock:
             self._failures.pop(address, None)
-        return digest
+        return self.digest(self._code)
 
     def issue(self, code_hash: str) -> str:
         payload = json.dumps({"v": 1, "code": code_hash, "exp": int(time.time()) + 60 * 60 * 24 * 30},

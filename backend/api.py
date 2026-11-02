@@ -107,7 +107,7 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
         preview_access = PreviewAccess(settings.data_dir / "preview_access.sqlite3")
     workflow = Workflow(settings, store, model=model)
     messages = MessageService(store, workflow)
-    invite_auth = InviteAuth(settings.invite_code_hashes, settings.invite_session_secret)
+    invite_auth = InviteAuth(settings.invite_code)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
