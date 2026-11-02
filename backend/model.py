@@ -46,7 +46,7 @@ class ModelGateway:
 
     def configure_platform_run(self, run_id: str, invite_hash: str) -> None:
         if invite_hash not in self._invite_hashes or not self.settings.model_api_key:
-            raise RuntimeError("平台测试额度未配置")
+            raise RuntimeError("测试模型暂不可用，请使用自己的 API Key")
         self.store.operation_set(run_id, "platform_model_access", {"invite_hash": invite_hash})
 
     def platform_quota_remaining(self, invite_hash: str) -> tuple[int, int]:
@@ -66,7 +66,7 @@ class ModelGateway:
     def check_platform_quota(self, invite_hash: str) -> int:
         calls, tokens = self.platform_quota_remaining(invite_hash)
         if calls <= 0 or tokens < 512:
-            raise RuntimeError("今日平台测试额度已用完，请使用自己的 API Key")
+            raise RuntimeError("今日测试模型用量已达上限，请使用自己的 API Key")
         return tokens
 
     def configure_run(self, run_id: str, credentials: ModelCredentials) -> None:

@@ -152,7 +152,7 @@ def test_invitation_daily_call_quota_blocks_next_model_attempt(tmp_path: Path):
     gateway.configure_platform_run(run["id"], code_hash)
     gateway.check_platform_quota(code_hash)
     store.record_model_attempt(run["id"], "plan")
-    with pytest.raises(RuntimeError, match="今日平台测试额度已用完"):
+    with pytest.raises(RuntimeError, match="今日测试模型用量已达上限"):
         gateway.check_platform_quota(code_hash)
 
 

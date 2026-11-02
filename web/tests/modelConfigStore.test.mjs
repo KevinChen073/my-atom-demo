@@ -41,6 +41,10 @@ for (const hostname of ['127.0.0.1', 'myatom-azure-check.example.com']) {
 
     assert.equal(store.setActiveModelConfig(config, true), true)
     assert.deepEqual(JSON.parse(browserStorage.getItem('myatom.model-config.v1')), config)
+    store.setPlatformModel(true)
+    assert.deepEqual(store.modelRequestHeader(), {}, 'test invite mode must not send the saved personal Key')
+    store.setPlatformModel(false)
+    assert.deepEqual(JSON.parse(store.modelRequestHeader()['X-Myatom-Model-Config']), config)
     const refreshed = await loadStore(hostname, browserStorage)
     assert.deepEqual(refreshed.currentModelConfig(), config)
 

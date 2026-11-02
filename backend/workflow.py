@@ -25,7 +25,7 @@ from .exceptions import (MODEL_OUTPUT_REASONS, PLAN_VALIDATION_REASONS, PlanVali
                          SourceValidationError, cause_chain, classify, plan_validation_error_code, safe_phase)
 from .runner import LocalRunner
 from .settings import Settings
-from .source_harness import (GENERATED_FILE, repair_feedback, source_contract_prompt,
+from .source_harness import (GENERATED_FILE, TEMPLATE_STORAGE_FILE, repair_feedback, source_contract_prompt,
                              source_signatures, source_validation_reason, SOURCE_FAILURE_REASONS,
                              repair_interface_context)
 from .store import Store, dumps
@@ -494,6 +494,10 @@ class Workflow:
                 content, _ = self.store.get_version_file(base["id"], path)
                 if hashlib.sha256(content.encode("utf-8")).hexdigest() != entry.get("sha256"):
                     raise RuntimeError("上一版本源码校验失败，已停止迭代")
+                if path == TEMPLATE_STORAGE_FILE:
+                    # The runner injects this trusted template file into the new workspace.
+                    # It is part of the saved snapshot, but never an Agent-generated file.
+                    continue
                 files[path] = content
             if self.runner.inspect_generated(files):
                 raise RuntimeError("上一版本源码不符合当前生成边界，已停止迭代")

@@ -68,6 +68,27 @@ def test_iteration_keeps_approved_plan_and_untouched_source(tmp_path: Path):
         assert "点击加一" in project["versions"][0]["manifest"]["effective_spec"]["plan"]["features"]
 
 
+def test_short_follow_up_starts_iteration_but_not_first_run(tmp_path: Path):
+    app = create_app(Settings(data_dir=tmp_path, model_api_key="test-only"), model=FakeModel())
+    with TestClient(app) as client:
+        project_id = client.post("/api/projects", json={"title": "计数器"}).json()["id"]
+        endpoint = f"/api/projects/{project_id}/runs"
+        first_attempt = client.post(endpoint, json={"request_text": "增加图片"})
+        assert first_attempt.status_code == 422
+
+        store = app.state.store
+        first, _ = store.create_run(project_id, "做一个可以点击加一的计数器网页", "seed")
+        store.update_run(first["id"], status="completed", plan_json='{"title":"计数器","features":["点击加一"],"acceptance":["点击增加"]}')
+        version, _ = store.commit_version(project_id, first["id"], {"files": []})
+
+        second = client.post(endpoint, json={"request_text": "增加图片", "mode": "iterate"},
+                             headers={"Idempotency-Key": "short-follow-up"})
+        assert second.status_code == 201, second.text
+        assert second.json()["run"]["run_mode"] == "iterate"
+        assert second.json()["run"]["base_version_id"] == version["id"]
+        assert second.json()["run"]["request_text"] == "增加图片"
+
+
 def test_merge_iteration_plan_preserves_baseline_and_requires_exact_deletion():
     base = {"plan": {"title": "计数器", "pages": [], "features": ["点击加一"], "data_model": ["localStorage 记录计数"],
                      "acceptance": ["刷新后读回计数"], "tasks": ["计数"], "limitations": []}}

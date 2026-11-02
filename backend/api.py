@@ -39,7 +39,7 @@ class InviteInput(BaseModel):
 
 
 class RunInput(BaseModel):
-    request_text: str = Field(min_length=10, max_length=5000)
+    request_text: str = Field(min_length=1, max_length=5000)
     mode: Literal["auto", "create", "iterate"] = "auto"
 
 
@@ -299,20 +299,22 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
 
     @app.post("/api/projects/{project_id}/runs", status_code=201)
     def create_run(project_id: str, body: RunInput, request: Request, idempotency_key: str | None = Header(default=None)):
-        project_access(request, project_id)
+        project = project_access(request, project_id)
         credentials = request_credentials(request)
         invited = active_invite(request)
         if settings.app_env == "azure_demo" and not invited:
             raise HTTPException(status_code=401, detail="请先输入邀请码进入测试空间")
         if isinstance(workflow.model, ModelGateway) and not credentials and not (invited and settings.model_api_key):
-            raise HTTPException(status_code=403, detail="请在模型设置中填写自己的 API Key；邀请码测试模式可使用平台额度")
+            raise HTTPException(status_code=403, detail="请在模型设置中填写自己的 API Key，或使用测试邀请码")
         if credentials is None and invited and isinstance(workflow.model, ModelGateway):
             try:
                 workflow.model.check_platform_quota(invited)
             except RuntimeError as exc:
                 raise HTTPException(status_code=429, detail=str(exc)) from None
-        if not body.request_text.strip() or len(body.request_text.strip()) < 10:
-            raise HTTPException(status_code=422, detail="请至少用 10 个字描述应用需求")
+        minimum_length = 1 if project["active_version_id"] else 10
+        if len(body.request_text.strip()) < minimum_length:
+            detail = "请描述要修改的内容" if project["active_version_id"] else "请至少用 10 个字描述应用需求"
+            raise HTTPException(status_code=422, detail=detail)
         run, created = store.create_run(project_id, body.request_text.strip(), idempotency_key or str(uuid.uuid4()),
             limits={"model_calls": settings.max_model_calls, "total_tokens": settings.max_total_tokens,
                     "run_seconds": settings.max_run_seconds, "fix_rounds": settings.max_fix_rounds}, mode=body.mode)
