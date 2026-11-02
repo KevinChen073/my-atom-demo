@@ -37,7 +37,10 @@ def main() -> None:
         created = client.post(
             f"/api/projects/{project_id}/runs",
             json={"request_text": "做一个中文计数器网页，有加一、减一和清零按钮，显示当前数字。"},
-            headers={"Idempotency-Key": f"live-{project_id}"},
+            headers={"Idempotency-Key": f"live-{project_id}", "X-Myatom-Model-Config": json.dumps({
+                "provider": "deepseek" if "api.deepseek.com" in settings.model_base_url else "openai_compatible",
+                "api_key": settings.model_api_key, "base_url": settings.model_base_url,
+                "model_name": settings.model_name})},
         )
         created.raise_for_status()
         run_id = created.json()["run"]["id"]

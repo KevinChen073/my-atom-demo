@@ -4,6 +4,8 @@ from pathlib import Path
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from fastapi.testclient import TestClient
 
 from backend.api import create_app
@@ -28,14 +30,33 @@ def test_run_model_key_is_not_written_to_sqlite(tmp_path: Path):
     assert not ModelGateway(Settings(data_dir=tmp_path, model_api_key=""), Store(tmp_path / "myatom.sqlite3")).has_run_credentials(run["id"])
 
 
-def test_model_defaults_are_only_exposed_to_local_loopback(tmp_path: Path):
+def test_model_defaults_never_expose_environment_key(tmp_path: Path):
     app = create_app(Settings(data_dir=tmp_path, model_api_key="local-env-secret"))
     with TestClient(app, client=("127.0.0.1", 10001), base_url="http://127.0.0.1:8000") as client:
-        assert client.get("/api/model/defaults").json()["api_key"] == "local-env-secret"
+        assert client.get("/api/model/defaults").json()["api_key"] == ""
     with TestClient(app, client=("127.0.0.1", 10001), base_url="http://localhost:8000") as client:
-        assert client.get("/api/model/defaults").json()["api_key"] == "local-env-secret"
+        assert client.get("/api/model/defaults").json()["api_key"] == ""
     with TestClient(app, client=("192.0.2.10", 10001), base_url="http://myatom.example") as client:
         assert client.get("/api/model/defaults").json()["api_key"] == ""
+
+
+def test_local_run_requires_user_key_even_when_environment_key_exists(tmp_path: Path):
+    app = create_app(Settings(data_dir=tmp_path, model_api_key="local-env-secret"))
+    with TestClient(app) as client:
+        project = client.post("/api/projects", json={"title": "key check"}).json()
+        response = client.post(f"/api/projects/{project['id']}/runs", json={"request_text": "Please make a small task app"})
+        assert response.status_code == 403
+        assert "自己的 API Key" in response.json()["detail"]
+        assert client.get(f"/api/projects/{project['id']}").json()["runs"] == []
+
+
+def test_local_gateway_does_not_fall_back_to_environment_key(tmp_path: Path):
+    store = Store(tmp_path / "myatom.sqlite3")
+    project = store.create_project("owner", "key check")
+    run, _ = store.create_run(project["id"], "make a small app", "one")
+    gateway = ModelGateway(Settings(data_dir=tmp_path, model_api_key="local-env-secret"), store)
+    with pytest.raises(RuntimeError, match="自己的 API Key"):
+        gateway.generate(run["id"], "plan", "one", "system", "user")
 
 
 def test_user_key_follows_run_request_without_entering_platform_records(tmp_path: Path):

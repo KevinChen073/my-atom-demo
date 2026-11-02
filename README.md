@@ -10,7 +10,7 @@
 
 ## 本地运行（Windows PowerShell）
 
-需要 Python 3.11+、Node.js 22+、npm，以及一个可用的模型 API Key。用户可在工作台“模型设置”中自行填写；本地也可在项目根目录 `.env` 设置 `MODEL_API_KEY` 作为输入框默认值。参考 `.env.example`，不要提交 `.env`。
+需要 Python 3.11+、Node.js 22+、npm，以及一个可用的模型 API Key。普通模式请在工作台“模型设置”中自行填写；本地 `.env` 中的 `MODEL_API_KEY` 不再回填或自动用于普通任务，仅供已验证邀请码的平台测试模式使用。参考 `.env.example`，不要提交 `.env`。
 
 ```powershell
 cd D:\projects\my-atom-demo
@@ -23,7 +23,7 @@ cd ..
 .\.venv\Scripts\python.exe -m backend.serve
 ```
 
-打开 `http://127.0.0.1:8000`。命令同时启动 `127.0.0.1:8001` 上的独立 origin 本地预览服务。`web/dist` 存在时，FastAPI 提供主前端和 API。前端开发可在 `web` 下另开终端运行 `npm run dev`，Vite 会把 `/api` 转发到本地 API。
+打开 `http://127.0.0.1:8000`。预览使用同一 origin 下的 `/preview/...` 路径。`web/dist` 存在时，FastAPI 提供主前端和 API。前端开发可在 `web` 下另开终端运行 `npm run dev`，Vite 会把 `/api` 转发到本地 API。
 
 ## 独立异常后台（本地）
 
@@ -44,7 +44,7 @@ cd ..
 
 打开 `http://127.0.0.1:8002`，输入管理员密钥后查看所有项目的异常。主应用停机时后台仍可查询已有记录，但不会产生新记录。本地两个进程共享同一 SQLite 文件；跨机器上线前须验证统一数据库服务或可靠共享卷、只读权限与正式管理员身份方案。后台默认只绑定本机，不能将当前密钥页面直接作为公网管理员系统。
 
-第一次生成时，Runner 从固定模板执行 `npm ci` 和 `npm run build`，会下载模板依赖。工作台“模型设置”支持 DeepSeek 与 OpenAI 兼容 API。用户 Key 可保存在当前浏览器 localStorage，运行时发给主 API，主 API 仅在进程内存持有；本地 `.env` 的 `MODEL_API_KEY` 仅在本机访问时回填输入框。澄清/计划默认使用 high 思考，代码输出可用 `.env` 的 `MODEL_CODE_REASONING_EFFORT=none` 控制。参见 [ADR-025](docs/decisions/ADR-025-browser-model-settings.md)。
+第一次生成时，Runner 从固定模板执行 `npm ci` 和 `npm run build`，会下载模板依赖。工作台“模型设置”支持 DeepSeek 与 OpenAI 兼容 API。用户主动保存的 Key 可保存在当前浏览器 localStorage，运行时发给主 API，主 API 仅在进程内存持有；未保存过用户 Key 时，普通模式输入框为空。澄清/计划默认使用 high 思考，代码输出可用 `.env` 的 `MODEL_CODE_REASONING_EFFORT=none` 控制。参见 [ADR-033](docs/decisions/ADR-033-model-key-no-default.md)。
 
 ## 验证
 

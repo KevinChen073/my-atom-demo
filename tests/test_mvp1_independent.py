@@ -6,6 +6,7 @@ import threading
 import time
 import json
 import sqlite3
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,6 +18,7 @@ from openai import APITimeoutError
 
 from backend.api import create_app
 from backend.model import BudgetExceeded, ModelGateway
+from backend.invite_auth import InviteAuth
 from backend.settings import Settings
 from backend.store import Store, dumps
 from tests.test_mvp1 import FakeModel, wait_status
@@ -29,12 +31,19 @@ def new_store_run(tmp_path: Path) -> tuple[Store, str]:
     return store, run["id"]
 
 
+def granted_test_gateway(settings: Settings, store: Store, run_id: str) -> ModelGateway:
+    code = "test-only-invitation"
+    gateway = ModelGateway(replace(settings, invite_code=code), store)
+    gateway.configure_platform_run(run_id, InviteAuth.digest(code))
+    return gateway
+
+
 def test_model_hard_budget_stops_before_network(tmp_path: Path):
     store, run_id = new_store_run(tmp_path)
     settings = Settings(data_dir=tmp_path, model_api_key="test-only", max_model_calls=0)
     with sqlite3.connect(store.path) as db:
         db.execute("UPDATE runs SET max_model_calls=0 WHERE id=?", (run_id,))
-    gateway = ModelGateway(settings, store)
+    gateway = granted_test_gateway(settings, store, run_id)
     gateway.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(
         create=lambda **_: pytest.fail("network call made after hard budget"))))
     with pytest.raises(BudgetExceeded):
@@ -91,6 +100,8 @@ def test_long_human_wait_does_not_consume_execution_budget(tmp_path: Path):
 
 def test_active_segments_accumulate_and_restart_excludes_downtime(tmp_path: Path):
     store, run_id = new_store_run(tmp_path)
+    with sqlite3.connect(store.path) as db:
+        db.execute("UPDATE runs SET max_run_seconds=5 WHERE id=?", (run_id,))
     settings = Settings(data_dir=tmp_path, model_api_key="test-only", max_run_seconds=5)
     gateway = ModelGateway(settings, store)
     assert store.begin_execution(run_id)
@@ -119,7 +130,7 @@ def test_active_segments_accumulate_and_restart_excludes_downtime(tmp_path: Path
 
 def test_model_retries_transient_timeout_and_tracks_usage(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     store, run_id = new_store_run(tmp_path)
-    gateway = ModelGateway(Settings(data_dir=tmp_path, model_api_key="test-only"), store)
+    gateway = granted_test_gateway(Settings(data_dir=tmp_path, model_api_key="test-only"), store, run_id)
     calls = 0
 
     def complete(**_):
@@ -140,7 +151,7 @@ def test_model_retries_transient_timeout_and_tracks_usage(tmp_path: Path, monkey
 
 def test_missing_usage_is_conservatively_counted(tmp_path: Path):
     store, run_id = new_store_run(tmp_path)
-    gateway = ModelGateway(Settings(data_dir=tmp_path, model_api_key="test-only"), store)
+    gateway = granted_test_gateway(Settings(data_dir=tmp_path, model_api_key="test-only"), store, run_id)
     gateway.client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=lambda **_: SimpleNamespace(
         usage=None, choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'), finish_reason="stop")]))))
     gateway.generate(run_id, "clarify", "no-usage", "system", "user")
@@ -149,7 +160,7 @@ def test_missing_usage_is_conservatively_counted(tmp_path: Path):
 
 def test_truncated_thinking_response_increases_limit_and_records_safe_trace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     store, run_id = new_store_run(tmp_path)
-    gateway = ModelGateway(Settings(data_dir=tmp_path, model_api_key="test-only"), store)
+    gateway = granted_test_gateway(Settings(data_dir=tmp_path, model_api_key="test-only"), store, run_id)
     limits: list[int] = []
     modes: list[tuple[str, str]] = []
 
@@ -178,7 +189,7 @@ def test_model_caps_output_to_remaining_token_budget(tmp_path: Path):
     store.add_usage(run_id, 35_000)
     with sqlite3.connect(store.path) as db:
         db.execute("UPDATE runs SET max_total_tokens=40000 WHERE id=?", (run_id,))
-    gateway = ModelGateway(Settings(data_dir=tmp_path, model_api_key="test-only", max_total_tokens=40_000), store)
+    gateway = granted_test_gateway(Settings(data_dir=tmp_path, model_api_key="test-only", max_total_tokens=40_000), store, run_id)
     observed: list[int] = []
 
     def complete(**kwargs):

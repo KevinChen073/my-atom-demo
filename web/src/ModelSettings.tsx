@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { currentModelConfig, DEFAULT_MODEL, isLocalWorkbench, setActiveModelConfig } from './modelConfigStore'
+import { currentModelConfig, DEFAULT_MODEL, setActiveModelConfig } from './modelConfigStore'
 import type { ModelConfig } from './modelConfigStore'
 import './model-settings.css'
 
@@ -20,10 +20,9 @@ export function ModelSettings({ onChange }: { onChange: (config: ModelConfig | n
       if (!response.ok) return
       const defaults = await response.json() as Defaults
       if (cancelled || currentModelConfig()) return
-      const next = { provider: defaults.provider || 'deepseek', api_key: defaults.api_key || '',
+      const next = { provider: defaults.provider || 'deepseek', api_key: '',
         base_url: defaults.base_url || DEFAULT_MODEL.base_url, model_name: defaults.model_name || DEFAULT_MODEL.model_name } as ModelConfig
       setConfig(next)
-      if (next.api_key) { setActiveModelConfig(next); onChange(next) }
     }).catch(() => undefined)
     return () => { cancelled = true }
   }, [onChange])
@@ -74,7 +73,7 @@ export function ModelSettings({ onChange }: { onChange: (config: ModelConfig | n
     {open && <div className="model-overlay" onMouseDown={event => { if (event.target === event.currentTarget) setOpen(false) }}>
       <div className="model-dialog" role="dialog" aria-modal="true" aria-labelledby="model-dialog-title">
         <div className="model-dialog-head"><h2 id="model-dialog-title">模型设置</h2><button type="button" onClick={() => setOpen(false)} aria-label="关闭模型设置">×</button></div>
-        <p>点击保存后，API Key 会存入当前浏览器，刷新后恢复。生成应用的预览与工作台同源，预览脚本可能读取此 Key；仅在受信环境使用，结束后请清除 Key。{isLocalWorkbench && '本地 .env Key 只作预填，未点击保存不会写入浏览器。'}</p>
+        <p>普通模式请填写自己的 API Key；已验证邀请码可使用平台测试额度。点击保存后，填写的 Key 会存入当前浏览器，刷新后恢复。生成应用的预览与工作台同源，预览脚本可能读取此 Key；仅在受信环境使用，结束后请清除 Key。</p>
         <label>服务类型</label><div className="model-provider-tabs">
           <button type="button" className={config.provider === 'deepseek' ? 'active' : ''} onClick={() => update({ provider: 'deepseek', base_url: 'https://api.deepseek.com', model_name: 'deepseek-chat' })}>DeepSeek</button>
           <button type="button" className={config.provider === 'openai_compatible' ? 'active' : ''} onClick={() => update({ provider: 'openai_compatible', base_url: 'https://api.openai.com/v1', model_name: 'gpt-4.1-mini' })}>OpenAI 兼容</button>

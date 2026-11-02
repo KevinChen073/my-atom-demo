@@ -17,7 +17,7 @@ import workbenchIcon from '../../design/v3/icons/workbench.svg'
 import overviewIcon from '../../design/v3/icons/overview.svg'
 import docsIcon from '../../design/v3/icons/docs.svg'
 import testsIcon from '../../design/v3/icons/tests.svg'
-import publishIcon from '../../design/v3/icons/publish.svg'
+import versionsIcon from '../../design/v3/icons/versions.svg'
 
 type Example = (typeof catalog.examples)[number]
 
@@ -40,7 +40,7 @@ type ProjectSummary = Pick<Project, 'id' | 'title' | 'updated_at'> & {
   latest_version_id: string | null
 }
 type Event = { run_id: string; seq: number; event_id: string; type: string; payload: Record<string, unknown>; at: string }
-type RightView = 'workbench' | 'overview' | 'documents' | 'tests' | 'publish'
+type RightView = 'workbench' | 'overview' | 'documents' | 'tests' | 'versions'
 type PreviewResponse = { url: string; expires_at: string }
 
 const REQUEST_DRAFTS_KEY = 'myatom.request-drafts.v1'
@@ -93,13 +93,13 @@ const USER_ACTIVITY: Record<string, string> = {
   completed: '应用已生成', failed: '本轮遇到问题', cancelled: '本轮已取消', budget_exceeded: '本轮达到用量上限', budget_extended: '你已确认增加额度',
 }
 const RIGHT_LABEL: Record<RightView, string> = {
-  workbench: '产物预览', overview: '项目概览', documents: '项目文档', tests: '测试', publish: '发布',
+  workbench: '产物预览', overview: '项目概览', documents: '项目文档', tests: '测试', versions: '版本',
 }
-const RIGHT_ICON: Record<RightView, string> = { workbench: workbenchIcon, overview: overviewIcon, documents: docsIcon, tests: testsIcon, publish: publishIcon }
-const ROUTE_SEGMENT: Record<RightView, string> = { workbench: '', overview: '/overview', documents: '/docs', tests: '/tests', publish: '/publish' }
+const RIGHT_ICON: Record<RightView, string> = { workbench: workbenchIcon, overview: overviewIcon, documents: docsIcon, tests: testsIcon, versions: versionsIcon }
+const ROUTE_SEGMENT: Record<RightView, string> = { workbench: '', overview: '/overview', documents: '/docs', tests: '/tests', versions: '/versions' }
 function parseRoute(path: string): { id: string | null; view: RightView } {
-  const match = path.match(/^\/projects\/([^/]+)(?:\/(overview|docs|tests|publish))?\/?$/)
-  const views: Record<string, RightView> = { overview: 'overview', docs: 'documents', tests: 'tests', publish: 'publish' }
+  const match = path.match(/^\/projects\/([^/]+)(?:\/(overview|docs|tests|versions|publish))?\/?$/)
+  const views: Record<string, RightView> = { overview: 'overview', docs: 'documents', tests: 'tests', versions: 'versions', publish: 'versions' }
   return { id: match?.[1] || null, view: views[match?.[2] || ''] || 'workbench' }
 }
 function projectGlyph(title: string): string { return [...title.trim()][0] || '项' }
@@ -528,7 +528,7 @@ function App() {
     api<PreviewResponse>(`/versions/${version.id}/preview`).then(result => {
       if (!live) return
       const url = new URL(result.url, window.location.href)
-      if (!['http:', 'https:'].includes(url.protocol) || url.origin === window.location.origin) throw new Error('预览地址未与主应用隔离，已阻止载入。')
+      if (!['http:', 'https:'].includes(url.protocol)) throw new Error('预览地址无效。')
       if ((url.hostname === 'localhost' || url.hostname.endsWith('.localhost') || url.hostname === '127.0.0.1') && !['localhost', '127.0.0.1'].includes(window.location.hostname)) throw new Error('此版本只有本机预览地址，当前访问环境无法打开。')
       setPreviewUrl(url.href)
     }).catch(err => { if (live) { setPreviewState('error'); setPreviewError((err as Error).message) } })
@@ -665,12 +665,13 @@ function App() {
     setWorkbenchTab('preview')
     selectRightView('workbench')
   }
-  async function activateSelectedVersion() {
-    if (!project || !version || busy || version.id === project.active_version_id) return
+  async function activateVersion(target: Version) {
+    if (!project || busy || target.id === project.active_version_id) return
     setBusy(true); setError('')
     try {
-      await api(`/projects/${project.id}/versions/${version.id}/activate`, { method: 'POST' })
+      await api(`/projects/${project.id}/versions/${target.id}/activate`, { method: 'POST' })
       await refreshProject(project.id)
+      setSelectedVersion(target.id)
     } catch (err) { setError((err as Error).message) }
     finally { setBusy(false) }
   }
@@ -943,16 +944,16 @@ function App() {
           </div>
           <div className="layout-divider chat-divider" role="separator" tabIndex={0} aria-label="调整对话与内容区宽度" aria-orientation="vertical" aria-controls="conversation-pane results-pane" aria-valuemin={layout.range.chatMin} aria-valuemax={layout.range.chatMax} aria-valuenow={layout.current.chat} aria-valuetext={`对话区 ${Math.round(layout.current.chat)} 像素`} title="拖动调整对话宽度；方向键微调；双击恢复默认" onPointerDown={event => layout.start('chat', event)} onPointerMove={layout.move} onPointerUp={layout.finish} onPointerCancel={layout.cancel} onLostPointerCapture={layout.cancel} onKeyDown={event => layout.key('chat', event)} onDoubleClick={layout.reset} />
           <aside id="results-pane" className="results-panel" aria-label={RIGHT_LABEL[rightView]} hidden={!rightVisible}>
-            <nav className="project-view-nav" aria-label="项目内容视图">{(['workbench', 'overview', 'documents', 'tests', 'publish'] as RightView[]).map(view => <button key={view} data-view={view} className={rightView === view ? 'active' : ''} aria-current={rightView === view ? 'page' : undefined} onClick={() => selectRightView(view)}><img src={RIGHT_ICON[view]} alt="" />{RIGHT_LABEL[view]}{view === 'tests' && run?.card?.type === 'test_result' && run.card.status === 'failed' && <i aria-label="有失败检查" />}</button>)}</nav>
+            <nav className="project-view-nav" aria-label="项目内容视图">{(['workbench', 'overview', 'documents', 'tests', 'versions'] as RightView[]).map(view => <button key={view} data-view={view} className={rightView === view ? 'active' : ''} aria-current={rightView === view ? 'page' : undefined} onClick={() => selectRightView(view)}><img src={RIGHT_ICON[view]} alt="" />{RIGHT_LABEL[view]}{view === 'tests' && run?.card?.type === 'test_result' && run.card.status === 'failed' && <i aria-label="有失败检查" />}</button>)}</nav>
             <div className={`right-content${rightView === 'workbench' ? ' workbench-content' : ''}${rightView === 'workbench' && version && workbenchTab === 'preview' ? ' preview-content' : ''}`}>{rightView === 'workbench' ? <h3 className="sr-only" ref={rightHeadingRef} tabIndex={-1}>产物预览</h3> : <div className="right-heading"><div><span className="eyebrow">PROJECT / {project?.title || projectId.slice(0, 8).toUpperCase()}</span><h3 ref={rightHeadingRef} tabIndex={-1}>{RIGHT_LABEL[rightView]}</h3></div><span>{project?.versions.length || 0} 个已存版本</span></div>}
             {rightView === 'workbench' && <>
-              <div className="workbench-toolbar"><div className="workbench-tabs" aria-label="成果视图"><button className={workbenchTab === 'preview' ? 'active' : ''} aria-pressed={workbenchTab === 'preview'} onClick={() => setWorkbenchTab('preview')}>预览</button><button className={workbenchTab === 'code' ? 'active' : ''} aria-pressed={workbenchTab === 'code'} onClick={() => setWorkbenchTab('code')}>代码</button></div>{version && <select aria-label="选择生成版本" value={version.id} onChange={event => { setSelectedVersion(event.target.value); setSelectedFile(null) }}>{project?.versions.map((item, index) => <option value={item.id} key={item.id}>v{project.versions.length - index} · {formatTime(item.created_at)}{item.id === project.active_version_id ? ' · 当前' : ''}</option>)}</select>}</div>
-              {version && project?.active_version_id !== version.id && <div className="version-selection-status"><span>正在查看历史版本</span><button disabled={busy} onClick={activateSelectedVersion}>设为当前版本</button></div>}{!version ? <div className="prebuild"><span className="prebuild-label"><i className="status-pin" />{isWaiting ? '生成前 / 等待确认' : isActive ? '生成中 / 请稍候' : '尚未生成版本'}</span><h3>{isWaiting ? '确认关键决定，再看结果。' : isActive ? 'Agent 正在完成这一版。' : '从需求开始，完成第一版。'}</h3><p>{isWaiting ? '左侧说明已确定的内容与下一步。这里不会显示不存在的应用或测试结果。' : isActive ? '生成与构建的真实进度会在左侧同步；通过检查后才能预览。' : '提交需求并确认计划后，预览和源码将在这里出现。'}</p><div className="prebuild-grid"><div><small>已知目标</small><b>{run?.request_text || '等待你提交需求'}</b></div><div><small>当前待办</small><b>{run ? PHASE[run.phase] || STATUS[run.status] || run.phase : '写下你的应用想法'}</b></div></div><div className="preview-placeholder"><img src={brandMark} alt="" /><b>尚无可预览版本</b><small>只有构建和预览检查通过的版本才会出现在这里。</small></div></div> : workbenchTab === 'preview' ? <div className="preview-workspace"><div className="preview-bar"><div><span className="window-dots" aria-hidden="true">● ● ●</span><strong>预览环境 · 版本 #{version.id.slice(0, 8)}</strong></div><button onClick={() => setPreviewReload(value => value + 1)}>重新载入</button></div>{previewState === 'error' ? <div className="preview-fallback" role="alert"><h4>该版本预览暂不可用</h4><p>{previewError}</p><div><button onClick={() => setPreviewReload(value => value + 1)}>重试预览</button><button onClick={() => setWorkbenchTab('code')}>查看代码</button></div></div> : <div className="preview-frame-wrap">{previewUrl && <iframe title={`项目 ${project?.title || ''} 的版本预览`} className={previewState === 'ready' ? 'ready' : ''} src={previewUrl} sandbox="allow-scripts allow-forms allow-same-origin" onLoad={event => onPreviewLoad(event.currentTarget)} onError={() => { setPreviewState('error'); setPreviewError('预览页面未能载入。') }} />}{previewState === 'loading' && <div className="preview-loading" role="status">正在载入真实应用预览…</div>}</div>}<div className="preview-data-note"><strong>数据保存</strong><span>{previewState === 'ready' ? '业务数据保存在当前浏览器的项目空间；同项目跨版本共用。请刷新核对；换浏览器或清除存储后无法恢复。' : '预览尚未载入，无法确认本次业务数据是否保存。'}</span><small>受信预览 · 非公网沙箱</small></div></div> : <div className="code-workspace"><div className="code-files"><strong>源码文件</strong><span>{version.manifest.files.length} 个文件 · {version.manifest.template}</span>{version.manifest.files.map(file => <button className={selectedFile === file.path ? 'active' : ''} key={file.path} onClick={() => setSelectedFile(file.path)}>{file.path}</button>)}</div><div className="code-reader"><div>{selectedFile || '选择左侧文件查看源码'}</div><pre>{selectedFile ? fileContent || '正在读取文件…' : '代码已保存。选择一个源码文件查看内容。'}</pre></div></div>}
+              <div className="workbench-toolbar"><div className="workbench-tabs" aria-label="成果视图"><button className={workbenchTab === 'preview' ? 'active' : ''} aria-pressed={workbenchTab === 'preview'} onClick={() => setWorkbenchTab('preview')}>预览</button><button className={workbenchTab === 'code' ? 'active' : ''} aria-pressed={workbenchTab === 'code'} onClick={() => setWorkbenchTab('code')}>代码</button></div>{version && <select aria-label="选择生成版本" value={version.id} onChange={event => { setSelectedVersion(event.target.value); setSelectedFile(null) }}>{project?.versions.map(item => <option value={item.id} key={item.id}>#{item.id.slice(0, 8)} · {formatTime(item.created_at)}{item.id === project.active_version_id ? ' · 当前' : ''}</option>)}</select>}</div>
+              {version && project?.active_version_id !== version.id && <div className="version-selection-status"><span>正在查看历史版本</span><button disabled={busy} onClick={() => activateVersion(version)}>设为当前版本</button></div>}{!version ? <div className="prebuild"><span className="prebuild-label"><i className="status-pin" />{isWaiting ? '生成前 / 等待确认' : isActive ? '生成中 / 请稍候' : '尚未生成版本'}</span><h3>{isWaiting ? '确认关键决定，再看结果。' : isActive ? 'Agent 正在完成这一版。' : '从需求开始，完成第一版。'}</h3><p>{isWaiting ? '左侧说明已确定的内容与下一步。这里不会显示不存在的应用或测试结果。' : isActive ? '生成与构建的真实进度会在左侧同步；通过检查后才能预览。' : '提交需求并确认计划后，预览和源码将在这里出现。'}</p><div className="prebuild-grid"><div><small>已知目标</small><b>{run?.request_text || '等待你提交需求'}</b></div><div><small>当前待办</small><b>{run ? PHASE[run.phase] || STATUS[run.status] || run.phase : '写下你的应用想法'}</b></div></div><div className="preview-placeholder"><img src={brandMark} alt="" /><b>尚无可预览版本</b><small>只有构建和预览检查通过的版本才会出现在这里。</small></div></div> : workbenchTab === 'preview' ? <div className="preview-workspace"><div className="preview-bar"><div><span className="window-dots" aria-hidden="true">● ● ●</span><strong>预览环境 · 版本 #{version.id.slice(0, 8)}</strong></div><button onClick={() => setPreviewReload(value => value + 1)}>重新载入</button></div>{previewState === 'error' ? <div className="preview-fallback" role="alert"><h4>该版本预览暂不可用</h4><p>{previewError}</p><div><button onClick={() => setPreviewReload(value => value + 1)}>重试预览</button><button onClick={() => setWorkbenchTab('code')}>查看代码</button></div></div> : <div className="preview-frame-wrap">{previewUrl && <iframe title={`项目 ${project?.title || ''} 的版本预览`} className={previewState === 'ready' ? 'ready' : ''} src={previewUrl} sandbox="allow-scripts allow-forms allow-same-origin" onLoad={event => onPreviewLoad(event.currentTarget)} onError={() => { setPreviewState('error'); setPreviewError('预览页面未能载入。') }} />}{previewState === 'loading' && <div className="preview-loading" role="status">正在载入真实应用预览…</div>}</div>}<div className="preview-data-note"><strong>数据保存</strong><span>{previewState === 'ready' ? '业务数据保存在当前浏览器的项目空间；同项目跨版本共用。请刷新核对；换浏览器或清除存储后无法恢复。' : '预览尚未载入，无法确认本次业务数据是否保存。'}</span><small>受信预览 · 非公网沙箱</small></div></div> : <div className="code-workspace"><div className="code-files"><strong>源码文件</strong><span>{version.manifest.files.length} 个文件 · {version.manifest.template}</span>{version.manifest.files.map(file => <button className={selectedFile === file.path ? 'active' : ''} key={file.path} onClick={() => setSelectedFile(file.path)}>{file.path}</button>)}</div><div className="code-reader"><div>{selectedFile || '选择左侧文件查看源码'}</div><pre>{selectedFile ? fileContent || '正在读取文件…' : '代码已保存。选择一个源码文件查看内容。'}</pre></div></div>}
             </>}
             {rightView === 'overview' && <OverviewPanel project={project} run={run} version={version} events={events} isWaiting={!!isWaiting} isActive={!!isActive} onWorkbench={() => selectRightView('workbench')} onOpenLatest={openLatestVersion} />}
             {rightView === 'documents' && <DocumentsPanel run={run} documentRun={documentRun} version={version} tab={docTab} onTab={selectDocTab} onWorkbench={() => selectRightView('workbench')} onOpenFile={openVersionFile} />}
             {rightView === 'tests' && <TestsPanel run={run} version={version} showBuildLog={showBuildLog} buildLogLoading={buildLogLoading} buildLog={buildLog} onToggleBuildLog={toggleBuildLog} />}
-            {rightView === 'publish' && <PublishPanel version={version} onTests={() => selectRightView('tests')} />}
+            {rightView === 'versions' && <VersionsPanel project={project} busy={busy} onPreview={item => { setSelectedVersion(item.id); setWorkbenchTab('preview'); selectRightView('workbench') }} onActivate={activateVersion} />}
             </div>
           </aside>
         </section>
@@ -998,14 +999,14 @@ function TestsPanel({ run, version, showBuildLog, buildLogLoading, buildLog, onT
   return <div className="right-content tests-page"><p className="right-description">结论与证据对应当前运行或已存版本；未执行项单独列出。</p>{diagnosisPanel}<div className="test-summary"><strong>{passed} / {total}</strong><div><h4>{steps.length ? '检查已执行' : '尚无执行记录'}</h4><p>{currentRunResult ? `本轮运行 #${run?.id.slice(0, 8)}` : version ? `版本 #${version.id.slice(0, 8)}` : '本轮尚无保存版本'} · 浏览器检查尚无执行证据</p></div></div><div className="test-bars" aria-hidden="true">{steps.map((step, i) => <span className={step.exit_code === 0 ? 'pass' : 'fail'} key={i} />)}<span className="pending" /></div><div className="test-table-head"><span>检查项</span><span>结果</span><span>证据</span></div>{steps.map((step, i) => <div className="test-row" key={i}><span className={`test-icon ${step.exit_code === 0 ? 'pass' : 'fail'}`}>{step.exit_code === 0 ? '✓' : '!'}</span><div><strong>{step.command}</strong><small>执行 {step.seconds}s · exit {step.exit_code}</small></div><span className={`test-tag ${step.exit_code === 0 ? 'pass' : 'fail'}`}>{step.exit_code === 0 ? '通过' : '失败'}</span>{canReadLog ? <button onClick={onToggleBuildLog}>{showBuildLog ? '收起日志' : '查看日志'}</button> : <span className="no-evidence">仅有步骤摘要</span>}</div>)}<div className="test-row"><span className="test-icon pending">!</span><div><strong>浏览器检查</strong><small>暂无当前版本的真实交互执行记录</small></div><span className="test-tag pending">未执行</span><span className="no-evidence">暂无证据</span></div>{canReadLog && showBuildLog && <pre className="right-log">{buildLogLoading ? '正在读取日志…' : buildLog || '没有可用日志。'}</pre>}<div className="test-explanation"><strong>结果解释</strong><p>构建通过代表代码检查通过；浏览器流程需要实际运行后才能标记完成。</p></div></div>
 }
 
-function PublishPanel({ version, onTests }: { version: Version | null; onTests: () => void }) {
-  const checks = [
-    { label: '代码版本', detail: version ? `#${version.id.slice(0, 8)} 已保存` : '尚无版本', done: !!version, status: version ? '已具备' : '待完成' },
-    { label: '构建与类型检查', detail: version?.manifest.build.ok ? '已保存版本的构建通过' : '尚无通过记录', done: !!version?.manifest.build.ok, status: version?.manifest.build.ok ? '已具备' : '待完成' },
-    { label: '浏览器验证', detail: '尚无当前版本的真实业务流程记录', done: false, status: '待完成' },
-    { label: '公开环境', detail: '发布服务尚未接入', done: false, status: '不可用' },
-  ]
-  return <div className="right-content publish-page"><p className="right-description">检查发布条件，并只在真实上线后展示公开链接。</p><div className="publish-status"><h4>尚未发布</h4><p>当前项目还没有公开访问地址。预览可供项目内检查。</p></div><div className="publish-columns"><section><h4>发布前检查</h4>{checks.map(item => <div className="publish-check" key={item.label}><span className={`test-icon ${item.done ? 'pass' : 'pending'}`}>{item.done ? '✓' : '!'}</span><div><strong>{item.label}</strong><small>{item.detail}</small></div><b className={item.done ? 'ready' : ''}>{item.status}</b></div>)}</section><aside><h4>公开链接</h4><div className="public-link-empty"><span>↗</span><strong>尚无公开地址</strong><p>发布成功后显示真实 URL 及对应版本。</p></div></aside></div><div className="publish-next"><div><strong>下一步</strong><p>完成真实浏览器验证，并接入发布环境后再启用发布操作。</p></div><button onClick={onTests}>查看测试 →</button></div></div>
+function VersionsPanel({ project, busy, onPreview, onActivate }: { project: Project | null; busy: boolean; onPreview: (version: Version) => void; onActivate: (version: Version) => void }) {
+  const versions = project?.versions || []
+  const current = versions.find(item => item.id === project?.active_version_id)
+  return <div className="right-content versions-page"><p className="right-description">每次成功生成会保存一份完整快照，最多保留 5 个可用版本。</p>
+    <div className="versions-current"><span className="eyebrow">当前版本</span><h4>{current ? `#${current.id.slice(0, 8)}` : '尚无版本'}</h4><p>{current ? `保存于 ${formatTime(current.created_at)} · 构建${current.manifest.build.ok ? '通过' : '未通过'}` : '完成首次构建后，这里会显示当前版本。'}</p></div>
+    <section className="versions-history" aria-label="版本记录"><h4>版本记录 <small>{versions.length} / 5</small></h4>{versions.length ? versions.map(item => <div className="version-row" key={item.id}><div className="version-row-main"><strong>版本 <code>#{item.id.slice(0, 8)}</code></strong>{item.id === project?.active_version_id && <span className="current-version-badge">当前版本</span>}<small>{formatTime(item.created_at)} · 构建{item.manifest.build.ok ? '通过' : '未通过'} · {item.manifest.files.length} 个文件</small></div><div className="version-row-actions"><button onClick={() => onPreview(item)}>查看预览</button>{item.id !== project?.active_version_id && <button className="primary" disabled={busy} onClick={() => onActivate(item)}>设为当前版本</button>}</div></div>) : <p className="versions-empty">还没有可用版本。确认计划并完成构建后，版本会保存在这里。</p>}</section>
+    {versions.length > 0 && <p className="versions-data-note">切换当前版本只改变代码快照；浏览器中的业务数据不会随之回滚。请在切换后检查旧版能否读取现有数据。</p>}
+  </div>
 }
 
 function PlanView({ plan }: { plan: Plan }) {

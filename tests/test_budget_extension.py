@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from backend.api import create_app
 from backend.budget import effective_limits
 from backend.model import BudgetExceeded, ModelGateway
+from backend.model_credentials import validate_model_credentials
 from backend.settings import Settings
 from backend.store import Store
 from tests.test_mvp1 import FakeModel, wait_status
@@ -33,6 +34,9 @@ def test_output_reserve_uses_persisted_100k_run_limit_without_model_call(tmp_pat
     run, _ = store.create_run(project["id"], "做一个计数器网页应用", "one")
     store.add_usage(run["id"], 99_000)
     gateway = ModelGateway(Settings(data_dir=tmp_path, model_api_key="test-only"), store)
+    gateway.configure_run(run["id"], validate_model_credentials({
+        "provider": "deepseek", "api_key": "test-user-key", "base_url": "https://api.deepseek.com",
+        "model_name": "deepseek-chat"}))
     with pytest.raises(BudgetExceeded) as stopped:
         gateway.generate(run["id"], "plan", "one", "system", "a" * 700, max_tokens=1000)
     assert stopped.value.kind == "output_reserve"

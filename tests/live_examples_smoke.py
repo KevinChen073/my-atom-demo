@@ -99,6 +99,10 @@ def run_example(example: dict, settings: Settings, timeout: int) -> dict:
         response = client.post(
             f"/api/projects/{project_id}/runs",
             json={"request_text": example["request_text"]},
+            headers={"X-Myatom-Model-Config": json.dumps({
+                "provider": "deepseek" if "api.deepseek.com" in settings.model_base_url else "openai_compatible",
+                "api_key": settings.model_api_key, "base_url": settings.model_base_url,
+                "model_name": settings.model_name})},
         )
         response.raise_for_status()
         run_id = response.json()["run"]["id"]

@@ -110,7 +110,7 @@ class ModelGateway:
         platform_allowed = (isinstance(platform_access, dict)
                             and platform_access.get("invite_hash") in self._invite_hashes
                             and bool(self.settings.model_api_key))
-        if credentials is None and self.settings.app_env == "azure_demo" and not platform_allowed:
+        if credentials is None and not platform_allowed:
             raise RuntimeError("请先填写自己的 API Key，或使用有效邀请码登录")
         if platform_allowed:
             self.check_platform_quota(platform_access["invite_hash"])

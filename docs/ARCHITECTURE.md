@@ -22,7 +22,7 @@ flowchart LR
   H --> M[模型服务适配器]
 ```
 
-本地使用 Python API 服务和受控 worker，SQLite 保存平台记录、checkpoint、预览票据及完整版本文件，见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)。Azure 按 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 与 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 采用**受信演示**：主 API 容器内构建，容器自身 `/app/data` 只作临时工作区；平台记录、LangGraph checkpoint 与已提交版本的文本文件统一使用 Azure SQL；独立异常后台仍单独部署。`azure_demo` 完整工作台已上线；[ADR-027](decisions/ADR-027-azure-sql-trusted-demo-network.md) 采用允许 Azure 服务访问 SQL 的服务器规则，旧容器出口单 IP 规则已移除，项目创建与读回冒烟通过；完整 Azure 跨重启验收未通过。它不提供代码执行隔离。按 [ADR-031](decisions/ADR-031-public-invite-access.md)，目标是任意网络可打开首页，只有受信邀请码持有者可创建、生成和预览；匿名自带 Key 仍无生成权限。沿用同容器 Runner 与同源预览，不新增隔离资源；入口 IP 规则只有在授权门禁和在线冒烟通过后才移除。此模式不是面向不可信公众的代码执行服务。实施与未验证边界见 [Azure 持久化](AZURE-PERSISTENCE.md)。浏览器不直接调用模型服务或读取服务器文件；本地模型设置接口可在严格 loopback 条件下返回 `.env` Key，两端均在用户点击保存后将用户 Key 写入当前浏览器的 `localStorage`，见 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。
+本地使用 Python API 服务和受控 worker，SQLite 保存平台记录、checkpoint、预览票据及完整版本文件，见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)。Azure 按 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 与 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 采用**受信演示**：主 API 容器内构建，容器自身 `/app/data` 只作临时工作区；平台记录、LangGraph checkpoint 与已提交版本的文本文件统一使用 Azure SQL；独立异常后台仍单独部署。`azure_demo` 完整工作台已上线；[ADR-027](decisions/ADR-027-azure-sql-trusted-demo-network.md) 采用允许 Azure 服务访问 SQL 的服务器规则，旧容器出口单 IP 规则已移除，项目创建与读回冒烟通过；完整 Azure 跨重启验收未通过。它不提供代码执行隔离。按 [ADR-031](decisions/ADR-031-public-invite-access.md)，目标是任意网络可打开首页，只有受信邀请码持有者可创建、生成和预览；匿名自带 Key 仍无生成权限。沿用同容器 Runner 与同源预览，不新增隔离资源；入口 IP 规则只有在授权门禁和在线冒烟通过后才移除。此模式不是面向不可信公众的代码执行服务。实施与未验证边界见 [Azure 持久化](AZURE-PERSISTENCE.md)。浏览器不直接调用模型服务或读取服务器文件；本地与线上模型默认值接口均不返回环境 Key；普通模式须由用户提供 Key，持码测试任务才可使用服务端平台 Key。用户点击保存后两端均将其自有 Key 写入当前浏览器的 `localStorage`，见 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md) 与 [ADR-033](decisions/ADR-033-model-key-no-default.md)。
 
 下文的 `ProjectRepository`、checkpointer、事件表与异常库属于 **MYATOM 平台**，可以使用服务端数据库；生成交付物自己的业务数据限工作台共享 origin 下的浏览器 `localStorage`，键名前缀为 `myatom.app.<项目 UUID>.`。同一项目跨版本复用前缀；不同项目在正常读写路径中避免键名冲突，但同源代码可读写其他项目键和工作台保存的模型 Key，前缀不构成安全边界。见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md)。生成交付物若包含后端，只能有一个进程、一个监听端口，且不得用服务端数据库/缓存保存业务数据；MYATOM 的主 API、预览网关、独立异常后台不计入该限额。
 
@@ -37,9 +37,9 @@ flowchart LR
 | `EventLog` | 原子追加 `seq`、按 `after_seq` 回放 | SQLite | Azure SQL；锁定 run 行分配序号，故障恢复待实测 |
 | `ArtifactStore` | 按项目/运行/版本保存受控源码、文本构建资源与 manifest | SQLite `version_files` | Azure SQL `version_files` 为权威存储；容器 `/app/data` 为构建缓存。真实 Azure 数据库事务待验 |
 | `GeneratedAppStorage` | 在生成模板 `src/hooks/` 内封装 `myatom.app.<项目 UUID>.` 前缀、读写与键名校验；只存生成应用业务数据 | 本地已实现共享 origin 的浏览器存储，Azure 待验收 | 同 origin 的 Web 存储；不使用平台 DB/SQL/缓存保存交付物业务数据；前缀不是权限边界 |
-| `ModelGateway` | 统一消息、结构化输出、token 用量、超时、取消 | 用户 Key 或本地 `.env` 默认值 | 用户在浏览器配置 Key；服务端当前 run 内存使用，进程重启后重新提供；兼容性待测 |
+| `ModelGateway` | 统一消息、结构化输出、token 用量、超时、取消 | 普通模式使用用户 Key；持码 run 可使用服务端测试 Key | 用户在浏览器配置 Key；服务端当前 run 内存使用，进程重启后重新提供；兼容性待测 |
 | `Runner` | 创建工作区、构建/测试、限额、停止、清理 | 本地同宿主可信开发 | Azure 受信演示在主容器内构建；邀请码仅向受信测试者发放，不向匿名访客开放生成 |
-| `PreviewGateway` | 发布版本、返回受限 URL、停止/过期 | 本地已实现工作台同 origin 的 `/preview/...`；Azure 待验收 | Azure 默认 HTTPS FQDN 上的共享路径预览；服务端归属与短期会话仍需实测 |
+| `PreviewGateway` | 从已存快照签发预览 URL、校验票据/归属、读取资源与处理过期 | 本地工作台同 origin 的 `/preview/...` | Azure 默认 HTTPS FQDN 上的共享路径预览；同源版本不被前端阻止；线上加载仍需实测 |
 | `SecretProvider` | 服务端按环境取凭证 | 本地环境配置 | Azure 托管密钥；禁止注入生成项目 |
 
 适配器不向上层暴露供应商数据库字段或模型专属消息格式。MYATOM 项目/会话/运行/版本与生成应用业务数据分属服务端和浏览器两个边界。Azure 环境从专用空库与空容器目录开始，**不导入本机历史项目、记录、checkpoint 或产物**；本地环境继续独立保存原数据。浏览器业务数据不随部署路径或代码快照自动搬迁。版本入库时文件行、manifest、当前指针与五版淘汰必须处于同一数据库事务（本地 SQLite，线上 Azure SQL）；预览、源码查看和迭代基线均从数据库读，不以构建目录存在为前提。
@@ -101,6 +101,8 @@ RunState = {
 存储事务保证：用户消息先独立入库再返回接收回执；解释器输出是候选，最终决定、状态转移、事件追加使用同一个业务事务。两端候选目录只负责构建，受控文本文件与 manifest、版本指针在同一数据库事务提交。checkpoint 是流程恢复依据，业务记录是 UI/审计依据；两者不共享同一“写入成功”的假设，启动时分别恢复未解释消息与待处理决定。确认卡采用 `card_id/spec_version` 乐观锁，过期确认返回冲突和最新卡片。解释调用计入 Agent 执行时间，用户等待不计时；解释器只读卡片，不取得生成工具权限。
 
 版本目录与项目记录分开：`RunState.last_good_version_id` 是运行中的参考，项目级 `active_version_id` 才是预览/回滚的当前指向。只有构建和预览可用性检查通过的完整源码、资源、锁文件、manifest、构建产物及测试引用进入不可变可用快照。成功发布先持久化新快照并原子切换当前指向，再淘汰最早且非当前的快照，使每项目最多保留 5 个可用版本；失败不切换、不淘汰。回滚原子切换到现存可用快照，不新增版本；重复请求幂等。清理旧快照须在元数据提交后执行，并能在中断后补偿，不能产生悬空指向。`approved_spec_version` 是计划确认版本，不等同交付物 `version_id`。
+
+**预览与版本工作区**：按 [ADR-032](decisions/ADR-032-preview-and-version-workspace.md)，前端不再因预览 URL 与工作台同源而阻止 iframe，服务端也不因旧模板标识拒绝已有构建产物的快照。`GET /api/versions/{id}/preview` 签发一次性票据；`/preview/open/{id}` 兑换短期会话，资源请求逐次核对版本、项目及访问身份。快照文件缺失仍不可预览；这些服务端检查不构成浏览器脚本隔离。右侧第五页为 `/projects/{id}/versions`，旧 `/publish` 仅作书签兼容。临时查看只改变前端 `selectedVersion`；明确点击“设为当前版本”才调用 `POST /api/projects/{id}/versions/{version_id}/activate` 并刷新项目，数据库原子更新 `active_version_id`。浏览器 `localStorage` 不随指针切换，旧模板的数据兼容性由用户在预览中核对。在线同源预览与回滚仍需浏览器验收。
 
 已有版本的新 run 在项目行锁内固定 `base_version_id` 和 `base_spec_json`；若发布前当前指针已变化，版本事务拒绝提交。计划节点把基线已确认规格与本轮变更合并为完整规格，沿用项默认保留，明确删除/替换项展示在确认卡。Prepare 从不可变基线 manifest 按 SHA-256 读入生成源码，CodeLoop 的首轮与后续局部修复均收到目标文件原文和受限依赖接口；合并后的完整候选走原源码校验、TypeScript 构建和预览探针。成功版本保存 `effective_spec` 与 `base_version_id`，失败不替换旧版本。自动检查无法证明所有旧交互仍可用，TC 必须覆盖基线与本轮变化。见 [ADR-019](decisions/ADR-019-version-inheritance.md)。
 

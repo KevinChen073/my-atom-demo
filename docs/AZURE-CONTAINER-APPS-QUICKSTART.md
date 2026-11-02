@@ -1,6 +1,6 @@
 # MYATOM：从 GitHub 到 Azure Container Apps 快速操作指南
 
-状态：操作文档，2026-11-01；**完整工作台已部署到受信 IP 范围，首页和 Azure SQL 项目读写冒烟通过；真实模型生成、预览与重启恢复尚未在线验证。** 实际证据与配置见 [Azure 部署记录](AZURE-SMOKE-DEPLOY-2026-11-01.md)。产品验收以 [PRD](PRD.md)、[架构](ARCHITECTURE.md) 和 [部署 TC](../tests/cases/DEPLOYMENT-AZURE.md) 为准；路线决定见 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md)。
+状态：操作文档，更新于 2026-11-02；**工作台首页已开放所有网络，项目操作仍需邀请码；首页和 Azure SQL 项目读写冒烟通过，真实模型生成与重启恢复尚未在线验证。** 已保存版本的线上预览将在本次镜像更新后复测。实际证据与配置见 [Azure 部署记录](AZURE-SMOKE-DEPLOY-2026-11-01.md)。产品验收以 [PRD](PRD.md)、[架构](ARCHITECTURE.md) 和 [部署 TC](../tests/cases/DEPLOYMENT-AZURE.md) 为准；路线决定见 [ADR-014](decisions/ADR-014-atoms-deployment-and-model-credentials.md)。
 
 ## 先看官方入口
 
@@ -68,16 +68,16 @@ az containerapp up `
 | Python 服务入口 | `backend/serve.py` 明确只允许 `APP_ENV=local`，主 API 在 `backend/api.py` | 生产入口使用受支持的 ASGI 启动方式；区分测试/生产环境，容器启动、健康检查与关停行为通过测试 |
 | 平台状态 | 本地默认 SQLite；旧 PostgreSQL schema v2 用例在 CI 通过 | Azure 使用专用空 Azure SQL 库；平台 schema v1 与版本文本 schema v2 显式迁移、重启读回，独立异常后台只读查询；不搬本地历史 |
 | 文件与 Runner | 本地 `data/`；同宿主 Runner；镜像已加入 Node/npm 并通过健康模式容器冒烟，尚未在容器内运行生成构建 | Azure SQL `version_files` 保存受控源码与文本构建资源；容器 `/app/data` 只作临时工作区，不配置外部挂载。验证重启后从 SQL 预览/回滚/迭代；仅在受信演示环境同容器构建，单副本/单 worker，绝非安全沙箱 |
-| 预览与入口 | 本地同源 `/preview/...` 路由、票据与项目 ID 注入定向测试通过 | Azure 默认 HTTPS FQDN 同 origin 的 `/preview/...` 路径与 `myatom.app.<项目 UUID>.*` 存储前缀；需在线验证票据/刷新读回及入口认证/IP 允许列表。前缀不构成安全隔离，详见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) |
-| 模型与密钥 | 工作台可输入 DeepSeek / OpenAI 兼容 API Key，本地 `.env` 可预填 | 本地与 Azure 均在点击保存后将用户 Key 写入当前浏览器 `localStorage`，刷新后恢复；见 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。主 API 不持久保存 Key；真实模型测试需用户提供测试 Key |
+| 预览与入口 | 本地同源 `/preview/...` 路由、票据与项目 ID 注入定向测试通过；Azure 入口已设为允许所有流量 | Azure 默认 HTTPS FQDN 同 origin 的 `/preview/...` 路径与 `myatom.app.<项目 UUID>.*` 存储前缀；仍需在线验证预览、票据与邀请码门禁。前缀不构成安全隔离，详见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) |
+| 模型与密钥 | 工作台可输入 DeepSeek / OpenAI 兼容 API Key，普通模式默认 Key 为空 | 本地与 Azure 均在点击保存后将用户 Key 写入当前浏览器 `localStorage`，刷新后恢复；服务端 `MODEL_API_KEY` 仅供已验证邀请码的平台测试任务，见 [ADR-033](decisions/ADR-033-model-key-no-default.md)。主 API 不持久保存用户 Key；真实模型测试需用户提供测试 Key |
 
-受信演示配置为 `APP_ENV=azure_demo`、`MYATOM_TRUSTED_DEMO=1`、`MYATOM_AZURE_SQL_CONNECTION_STRING`、`WORKBENCH_ORIGIN`（Container Apps 默认 HTTPS FQDN）、`MYATOM_DATA_DIR=/app/data`；不需要 `PREVIEW_BASE_DOMAIN`。同源路由本地定向测试通过，Azure 首页已打开，真实产物预览仍待验证。用户在工作台填写自己的模型 Key 时，Azure 页面刷新后恢复已保存 Key；同源预览脚本可读取这一保存键，风险见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) 与 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。2026-11-02 用户已在容器环境注入 `MODEL_API_KEY` 与 `MODEL_NAME`，在线健康接口显示模型 Key 非空，默认模型接口显示 `deepseek-chat`；真实模型调用仍待验证，且现在线上镜像尚无邀请码门禁，入口 IP 限制必须保持。Azure SQL 连接加密并验证证书，不设置 `MYATOM_DATABASE_URL`。入口 IP 允许列表已配置，但从非允许 IP 的拒绝响应尚未实测。实际访问参数和凭证不写进仓库。
+受信演示配置为 `APP_ENV=azure_demo`、`MYATOM_TRUSTED_DEMO=1`、`MYATOM_AZURE_SQL_CONNECTION_STRING`、`WORKBENCH_ORIGIN`（Container Apps 默认 HTTPS FQDN）、`MYATOM_DATA_DIR=/app/data`；不需要 `PREVIEW_BASE_DOMAIN`。同源路由本地定向测试通过，Azure 首页已打开，真实产物预览仍待验证。用户在工作台填写自己的模型 Key 时，Azure 页面刷新后恢复已保存 Key；同源预览脚本可读取这一保存键，风险见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) 与 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。2026-11-02 用户已在容器环境注入 `MODEL_API_KEY` 与 `MODEL_NAME`，在线健康接口显示模型 Key 非空；真实模型调用仍待验证。Azure SQL 连接加密并验证证书，不设置 `MYATOM_DATABASE_URL`。入口已允许所有网络，服务端邀请码门禁仍控制项目创建、读取、生成与预览；尚未从另一公网出口独立验证。实际访问参数和凭证不写进仓库。
 
-## 公开访问准备：邀请码与平台模型 Key（尚未部署）
+## 公开访问：邀请码与平台模型 Key
 
 [ADR-031](decisions/ADR-031-public-invite-access.md) 规定仅凭邀请码进入测试身份。只需配置 `MYATOM_INVITE_CODE` 一个邀请码环境变量；建议在 Container App 的 Secret 中保存原码，再绑定该环境变量，私下发给受信测试者。用户已接受短码容易被猜中的演示风险；代码允许 1 至 256 字符。无需计算摘要，也无需第二个会话密钥。所有持码人共享同一项目空间与额度；更换或移除该值并重新部署会使旧会话失效，旧项目不会自动迁移。平台模型 Key 用 Container App Secret 注入 `MODEL_API_KEY`，不通过前端接口下发。`MYATOM_INVITE_DAILY_MODEL_CALLS` 和 `MYATOM_INVITE_DAILY_TOKENS` 分别设置每日上限，当前默认值 120 次与 1000000 Token；这些限额不构成严格的费用硬上限。
 
-目标方案 A：任意网络可访问首页，只有有效邀请码持有者可创建、生成、读取项目与预览；匿名访客即使自带 Key 也不能生成。持码者可使用平台额度或自带 Key。代码已加入这些服务端门禁，仍须完成本地与 Azure 冒烟后才能调整入口 IP 规则。沿用主 API 容器构建与同源预览，不创建隔离 Job；邀请码只发给受信测试者，不能把此模式作为不可信公众生成服务。后续若扩大生成范围，按 [ADR-031](decisions/ADR-031-public-invite-access.md) 重新设计隔离。
+当前方案 A：任意网络可访问首页，只有有效邀请码持有者可创建、生成、读取项目与预览；匿名访客即使自带 Key 也不能生成。持码者可使用平台额度或自带 Key。入口 IP 限制已按用户确认移除；服务端门禁已在此前镜像部署，更新镜像后仍须在线冒烟。沿用主 API 容器构建与同源预览，不创建隔离 Job；邀请码只发给受信测试者，不能把此模式作为不可信公众生成服务。后续若扩大生成范围，按 [ADR-031](decisions/ADR-031-public-invite-access.md) 重新设计隔离。
 
 ### 3.1.1 容器临时工作区与运行参数
 

@@ -60,11 +60,14 @@ def test_shared_origin_preview_redeems_ticket_and_injects_project_id(tmp_path: P
         assert client.get(location.replace(version_a, version_b)).status_code == 401
 
 
-def test_legacy_version_cannot_run_unprefixed_storage_on_workbench_origin(tmp_path: Path):
+def test_legacy_version_can_preview_with_project_access_and_ticket(tmp_path: Path):
     app = create_app(Settings(data_dir=tmp_path))
     _, version = _version(app.state.store, "owner-a", "legacy", "react-vite-v3")
     with TestClient(app) as client:
         client.cookies.set("myatom_guest", "owner-a")
         response = client.get(f"/api/versions/{version}/preview")
-        assert response.status_code == 409
-        assert "旧版应用" in response.json()["detail"]
+        assert response.status_code == 200
+        opened = client.get(response.json()["url"], follow_redirects=False)
+        assert opened.status_code == 303
+        assert client.get(opened.headers["location"]).status_code == 200
+        assert client.get(response.json()["url"], follow_redirects=False).status_code == 401

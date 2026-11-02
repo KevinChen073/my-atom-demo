@@ -6,7 +6,6 @@ export type ModelConfig = {
 }
 
 const STORAGE_KEY = 'myatom.model-config.v1'
-export const isLocalWorkbench = ['localhost', '127.0.0.1', '[::1]'].includes(window.location.hostname)
 export const DEFAULT_MODEL: ModelConfig = {
   provider: 'deepseek', api_key: '', base_url: 'https://api.deepseek.com', model_name: 'deepseek-chat',
 }

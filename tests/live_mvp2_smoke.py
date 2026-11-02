@@ -34,7 +34,10 @@ def main() -> None:
         raise RuntimeError("本地 .env 缺少 MODEL_API_KEY")
     with TestClient(create_app(settings)) as main_client:
         project = main_client.post("/api/projects", json={"title": "MVP2 真实待办验收"}).json()
-        created = main_client.post(f"/api/projects/{project['id']}/runs", json={"request_text": "做一个中文待办事项应用，可以新增、编辑、完成和删除待办；每次操作保存到项目预览域的 localStorage，刷新页面后记录仍在。"})
+        created = main_client.post(f"/api/projects/{project['id']}/runs", json={"request_text": "做一个中文待办事项应用，可以新增、编辑、完成和删除待办；每次操作保存到项目预览域的 localStorage，刷新页面后记录仍在。"}, headers={"X-Myatom-Model-Config": json.dumps({
+            "provider": "deepseek" if "api.deepseek.com" in settings.model_base_url else "openai_compatible",
+            "api_key": settings.model_api_key, "base_url": settings.model_base_url,
+            "model_name": settings.model_name})})
         assert created.status_code == 201, created.text
         run_id = created.json()["run"]["id"]
         run = wait_for(main_client, run_id, "awaiting_clarification")

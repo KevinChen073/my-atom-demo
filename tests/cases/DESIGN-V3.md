@@ -1,6 +1,6 @@
 # V3 桌面工作台浏览器验收矩阵
 
-状态：用例定义；2026-10-31 已完成本地隔离夹具 V3 浏览器验收，实测与范围见过程记录。设计依据：[六页 V3](../../design/v3/README.md)、[交互基线](../../design/INTERACTIONS.md)、[设计决策](../../design/DECISIONS-v3.md)、[视觉规范](../../design/v3/VI.md)、[动效规范](../../design/v3/MOTION.md)、[token](../../design/v3/tokens.json)、[PRD](../../docs/PRD.md)。本文件是产品前端翻新的验收标准，设计图中的项目、预览、测试与发布结果只是示例。过程结果和评分另记 `D:\AI\ATOM笔试\docs\DESIGN-V3-VERIFICATION.md`。
+状态：历史 V3 用例；2026-10-31 已完成本地隔离夹具 V3 浏览器验收，实测与范围见过程记录。2026-11-02 第五页签“发布”及相关用例由 [ADR-032](../../docs/decisions/ADR-032-preview-and-version-workspace.md) 的“版本”页替代，现行验收见 [版本与预览 TC](VERSIONS-PREVIEW.md)。设计依据：[六页 V3](../../design/v3/README.md)、[交互基线](../../design/INTERACTIONS.md)、[设计决策](../../design/DECISIONS-v3.md)、[视觉规范](../../design/v3/VI.md)、[动效规范](../../design/v3/MOTION.md)、[token](../../design/v3/tokens.json)、[PRD](../../docs/PRD.md)。本文件记录历史前端翻新标准，设计图中的项目、预览、测试与发布结果只是示例。过程结果和评分另记 `D:\AI\ATOM笔试\docs\DESIGN-V3-VERIFICATION.md`。
 
 ## 执行准备与判定规则
 

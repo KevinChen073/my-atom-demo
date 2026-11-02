@@ -93,7 +93,7 @@ def test_invited_run_requires_own_key_until_platform_secret_is_configured(tmp_pa
         url = f"/api/projects/{project['id']}/runs"
         payload = {"request_text": "Please create a small application"}
         denied = client.post(url, json=payload)
-        assert denied.status_code == 403 and "平台测试 Key 尚未配置" in denied.json()["detail"]
+        assert denied.status_code == 403 and "自己的 API Key" in denied.json()["detail"]
         credentials = {"provider": "deepseek", "api_key": "private-test-key", "base_url": "https://api.deepseek.com",
                        "model_name": "deepseek-chat"}
         assert client.post(url, json=payload, headers={"X-Myatom-Model-Config": json.dumps(credentials)}).status_code == 201

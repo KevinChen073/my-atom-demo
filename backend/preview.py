@@ -80,8 +80,6 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
         if not project_id:
             raise HTTPException(status_code=401, detail="预览访问已过期，请从工作台重新打开")
         version = store.get_version(version_id)
-        if version.get("manifest", {}).get("template") != "react-vite-v4":
-            raise HTTPException(status_code=409, detail="旧版应用不能在同源预览中打开")
         if version["project_id"] != project_id:
             raise HTTPException(status_code=403, detail="预览无权访问此项目")
         require_invite_project(request, project_id)
@@ -93,8 +91,6 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="版本不存在")
         version = store.get_version(version_id)
         require_invite_project(request, version["project_id"])
-        if version.get("manifest", {}).get("template") != "react-vite-v4":
-            raise HTTPException(status_code=409, detail="旧版应用不能在同源预览中打开")
         session = access.consume_ticket(ticket, version_id)
         if not session:
             return expired_response()

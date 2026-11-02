@@ -6,7 +6,6 @@ import json
 import logging
 import secrets
 import uuid
-import ipaddress
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from typing import Any, Literal
@@ -248,17 +247,10 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
                 "invite_required": settings.app_env == "azure_demo"}
 
     @app.get("/api/model/defaults")
-    def model_defaults(request: Request):
-        local_client = False
-        try:
-            host = request.url.hostname or ""
-            local_host = host == "localhost" or ipaddress.ip_address(host).is_loopback
-            local_client = ipaddress.ip_address(request.client.host).is_loopback and local_host
-        except (ValueError, TypeError, AttributeError):
-            pass
+    def model_defaults():
         return {"provider": "deepseek" if "api.deepseek.com" in settings.model_base_url else "openai_compatible",
                 "base_url": settings.model_base_url,
-                "model_name": settings.model_name, "api_key": settings.model_api_key if settings.app_env == "local" and local_client else ""}
+                "model_name": settings.model_name, "api_key": ""}
 
     @app.post("/api/model/test")
     def test_model(request: Request):
@@ -312,8 +304,8 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
         invited = active_invite(request)
         if settings.app_env == "azure_demo" and not invited:
             raise HTTPException(status_code=401, detail="请先输入邀请码进入测试空间")
-        if settings.app_env == "azure_demo" and not credentials and not settings.model_api_key:
-            raise HTTPException(status_code=403, detail="平台测试 Key 尚未配置，请在模型设置中填写自己的 API Key")
+        if isinstance(workflow.model, ModelGateway) and not credentials and not (invited and settings.model_api_key):
+            raise HTTPException(status_code=403, detail="请在模型设置中填写自己的 API Key；邀请码测试模式可使用平台额度")
         if credentials is None and invited and isinstance(workflow.model, ModelGateway):
             try:
                 workflow.model.check_platform_quota(invited)
@@ -549,8 +541,6 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
         project_access(request, version["project_id"])
         if settings.app_env not in {"local", "azure_demo"}:
             raise HTTPException(status_code=503, detail="当前环境尚无预览服务")
-        if version.get("manifest", {}).get("template") != "react-vite-v4":
-            raise HTTPException(status_code=409, detail="旧版应用未使用项目存储前缀，不能在同源预览中打开；请基于此版本重新生成")
         try:
             store.get_version_file(version_id, "dist/index.html")
         except NotFound:
@@ -581,7 +571,7 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
 
         @app.get("/projects/{project_id}/{view}", include_in_schema=False)
         def project_view_page(project_id: str, view: str):
-            if view not in {"overview", "docs", "tests", "publish"}:
+            if view not in {"overview", "docs", "tests", "versions", "publish"}:
                 raise HTTPException(status_code=404, detail="页面不存在")
             return FileResponse(dist / "index.html")
 

@@ -24,7 +24,7 @@ def test_project_views_support_direct_open_and_reject_unknown_view(tmp_path: Pat
     with TestClient(create_app(settings, model=NoCallModel())) as client:
         home = client.get("/")
         assert home.status_code == 200
-        for suffix in ("", "/overview", "/docs", "/tests", "/publish"):
+        for suffix in ("", "/overview", "/docs", "/tests", "/versions", "/publish"):
             page = client.get(f"/projects/not-a-real-project{suffix}")
             assert page.status_code == 200
             assert page.text == home.text

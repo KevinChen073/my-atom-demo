@@ -1,6 +1,6 @@
 # ADR-026：共享预览 origin 与项目 ID 存储前缀
 
-- 状态：Accepted（2026-11-01，用户明确要求修改架构）；共享路径与模板适配器已在本地实现并通过定向测试，Azure 浏览器验收仍待执行。
+- 状态：Accepted（2026-11-01，用户明确要求修改架构）；2026-11-02 对历史版本预览限制由 [ADR-032](ADR-032-preview-and-version-workspace.md) 修订。共享路径与模板适配器已在本地实现并通过定向测试，Azure 浏览器验收仍待执行。
 - 修订：[ADR-004](ADR-004-generated-deliverable-boundaries.md) 第 3 条的每项目独立 origin、[ADR-020](ADR-020-azure-files-trusted-demo.md) 第 3/5 条的 wildcard 预览域，以及相应 PRD、架构和 Azure 部署目标。历史决定保留供追溯。
 - 关联：[PRD](../PRD.md)、[架构](../ARCHITECTURE.md)、[Azure 部署](../AZURE-CONTAINER-APPS-QUICKSTART.md)、[现行模型 Key 决定](ADR-028-browser-model-key-both-environments.md)、[验收](../../tests/cases/DEPLOYMENT-AZURE.md)。
 
@@ -21,7 +21,7 @@
 ## 实施与验收边界
 
 1. 已修改本地与 Azure 的预览路由、URL 生成和环境校验，移除每项目 Host 匹配与 wildcard 域依赖；保留服务端项目归属校验。Azure 现有旧镜像仍是健康模式，不能将本地实现写成已上线功能。
-2. 已在预览 HTML 注入受控项目 UUID，模板 `src/hooks/generatedAppStorage.ts` 提供前缀读写；CodeLoop 提示和源码校验禁止生成源码直接访问浏览器存储。历史无前缀版本不在同源预览中执行；用户可基于旧版的合并规格重新生成，新版通过后才可预览。旧 origin 数据不自动迁移。
+2. 已在预览 HTML 注入受控项目 UUID，模板 `src/hooks/generatedAppStorage.ts` 提供前缀读写；CodeLoop 提示和源码校验禁止新生成源码直接访问浏览器存储。历史无前缀版本按 ADR-032 允许预览，用户自行核对旧版与现有业务数据兼容性；旧 origin 数据不自动迁移。
 3. 浏览器实测同项目跨版本、刷新/重进和回滚后的键读回；A/B 项目正常路径不串写、禁用 `clear()`；另用受控脚本证明同源跨项目读取与 Key 读取风险，记录为**已知安全边界**，不得标为“隔离通过”。
 4. Azure Container Apps 默认 HTTPS FQDN 可以作为工作台与共享预览的访问域；仍需 Azure SQL 连通、入口访问限制、真实模型/构建/预览及重启恢复验收。SQL 防火墙与域名决策相互独立。
 

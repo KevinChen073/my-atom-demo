@@ -18,11 +18,11 @@ from fastapi.testclient import TestClient
 import pytest
 
 from backend.api import create_app
-from backend.model import ModelGateway
 from backend.settings import Settings
 from backend.store import Store
 from backend.workflow import normalize_plan
 from tests.test_mvp1 import FakeModel, wait_status
+from tests.test_mvp1_independent import granted_test_gateway
 
 
 class PlanBudgetModel(FakeModel):
@@ -100,10 +100,10 @@ def test_plan_gateway_disables_deep_thinking_but_keeps_json_budget(tmp_path: Pat
     store = Store(tmp_path / "myatom.sqlite3")
     project = store.create_project("isolated-owner", "计划预算")
     run, _ = store.create_run(project["id"], "制作一个带筛选的待办网页", "plan-budget")
-    gateway = ModelGateway(Settings(
+    gateway = granted_test_gateway(Settings(
         data_dir=tmp_path, model_api_key="test-only",
         model_reasoning_effort="high", model_code_reasoning_effort="none",
-    ), store)
+    ), store, run["id"])
     observed: list[dict] = []
 
     def complete(**kwargs):
