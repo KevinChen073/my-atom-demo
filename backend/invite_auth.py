@@ -13,8 +13,8 @@ from collections import defaultdict
 
 class InviteAuth:
     def __init__(self, code: str):
-        if code and not 24 <= len(code) <= 256:
-            raise RuntimeError("邀请码须为 24 至 256 个字符的随机码")
+        if len(code) > 256:
+            raise RuntimeError("邀请码不能超过 256 个字符")
         self._code = code
         self.allowed = frozenset({self.digest(code)}) if code else frozenset()
         self._secret = code.encode("utf-8")

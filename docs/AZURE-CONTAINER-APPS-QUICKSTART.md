@@ -75,7 +75,7 @@ az containerapp up `
 
 ## 公开访问准备：邀请码与平台模型 Key（尚未部署）
 
-[ADR-031](decisions/ADR-031-public-invite-access.md) 规定仅凭邀请码进入测试身份。用密码学安全随机源生成一个 24 至 256 字符的高熵随机码，私下发给受信测试者；在 Container App 的 Secret 中保存原码，并把环境变量 `MYATOM_INVITE_CODE` 绑定到这个 Secret。无需计算摘要，也无需第二个会话密钥。所有持码人共享同一项目空间与额度；更换或移除该值并重新部署会使旧会话失效，旧项目不会自动迁移。平台模型 Key 用 Container App Secret 注入 `MODEL_API_KEY`，不通过前端接口下发。`MYATOM_INVITE_DAILY_MODEL_CALLS` 和 `MYATOM_INVITE_DAILY_TOKENS` 分别设置每日上限，当前默认值 120 次与 1000000 Token。
+[ADR-031](decisions/ADR-031-public-invite-access.md) 规定仅凭邀请码进入测试身份。只需配置 `MYATOM_INVITE_CODE` 一个邀请码环境变量；建议在 Container App 的 Secret 中保存原码，再绑定该环境变量，私下发给受信测试者。用户已接受短码容易被猜中的演示风险；代码允许 1 至 256 字符。无需计算摘要，也无需第二个会话密钥。所有持码人共享同一项目空间与额度；更换或移除该值并重新部署会使旧会话失效，旧项目不会自动迁移。平台模型 Key 用 Container App Secret 注入 `MODEL_API_KEY`，不通过前端接口下发。`MYATOM_INVITE_DAILY_MODEL_CALLS` 和 `MYATOM_INVITE_DAILY_TOKENS` 分别设置每日上限，当前默认值 120 次与 1000000 Token；这些限额不构成严格的费用硬上限。
 
 目标方案 A：任意网络可访问首页，只有有效邀请码持有者可创建、生成、读取项目与预览；匿名访客即使自带 Key 也不能生成。持码者可使用平台额度或自带 Key。代码已加入这些服务端门禁，仍须完成本地与 Azure 冒烟后才能调整入口 IP 规则。沿用主 API 容器构建与同源预览，不创建隔离 Job；邀请码只发给受信测试者，不能把此模式作为不可信公众生成服务。后续若扩大生成范围，按 [ADR-031](decisions/ADR-031-public-invite-access.md) 重新设计隔离。
 

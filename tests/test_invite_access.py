@@ -197,3 +197,11 @@ def test_invalid_session_and_rate_limit():
         assert auth.authenticate("incorrect-invitation-code-long-enough", "198.51.100.1") is None
     assert auth.authenticate(CODE_A, "198.51.100.1") is None
     assert auth.authenticate(CODE_A, "198.51.100.2") == InviteAuth.digest(CODE_A)
+
+
+def test_short_single_invitation_code_is_accepted():
+    auth = InviteAuth("demo1234")
+    owner = auth.authenticate("demo1234", "198.51.100.3")
+    assert owner == InviteAuth.digest("demo1234")
+    assert auth.verify(auth.issue(owner)) == owner
+    assert auth.authenticate("wrong", "198.51.100.4") is None
