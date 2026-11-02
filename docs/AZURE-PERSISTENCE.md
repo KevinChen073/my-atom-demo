@@ -1,6 +1,6 @@
 # Azure 受信演示环境：Azure SQL 保存平台状态与版本文本
 
-数据库决定见 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md)，版本文本存储设计见 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md)，路径大小写修复见 [ADR-030](decisions/ADR-030-azure-sql-case-sensitive-version-paths.md)，同容器受信执行边界见 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)，共享预览 origin 见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md)，Azure SQL 网络决定见 [ADR-027](decisions/ADR-027-azure-sql-trusted-demo-network.md)。产品边界见 [PRD](PRD.md)，验收见 [Azure TC](../tests/cases/DEPLOYMENT-AZURE.md)。本地与 Azure 是独立数据环境；Azure 从专用空库与空容器目录开始，**不搬迁本地历史项目、checkpoint、版本或文件**。schema v3 增补版本路径的大小写语义；`azure_demo` 完整工作台已上线。Trace `2a393360-05b4-4978-818f-f1529cfd3eb7` 的提交故障表明 v2 不能保存大小写仅有差异的两个文件，在线修复结果见[部署记录](AZURE-SMOKE-DEPLOY-2026-11-01.md)。
+数据库决定见 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md)，版本文本存储设计见 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md)，路径大小写修复见 [ADR-030](decisions/ADR-030-azure-sql-case-sensitive-version-paths.md)，同容器受信执行边界见 [ADR-020](decisions/ADR-020-azure-files-trusted-demo.md)，共享预览 origin 见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md)，Azure SQL 网络决定见 [ADR-027](decisions/ADR-027-azure-sql-trusted-demo-network.md)。产品边界见 [PRD](PRD.md)，验收见 [Azure TC](../tests/cases/DEPLOYMENT-AZURE.md)。本地与 Azure 是独立数据环境；Azure 从专用空库与空容器目录开始，**不搬迁本地历史项目、checkpoint、版本或文件**。schema v3 增补版本路径的大小写语义；`azure_demo` 完整工作台已上线。Trace `2a393360-05b4-4978-818f-f1529cfd3eb7` 的提交故障表明 v2 不能保存大小写仅有差异的两个文件；在线修复的实测范围见 [Azure TC AZ-03](../tests/cases/DEPLOYMENT-AZURE.md)。
 
 | 数据 | 本地 | Azure 受信演示 |
 | --- | --- | --- |
@@ -12,7 +12,7 @@
 
 ## 运行配置与门禁
 
-- 已核对资源组 `rg-myatom-quickstart`、SQL Server `my-atom.database.windows.net` 与专用数据库 `my-atom-dev`。schema v2 和容器托管身份的基础项目读写已通过；schema v3 的在线验证单独记录。账号权限的最小化审计、完整业务恢复及账单仍待验。迁移脚本只接受专用空库或本仓已标记的 schema，不能直接对未知现有数据执行。
+- 已核对资源组 `rg-myatom-quickstart`、SQL Server `my-atom.database.windows.net` 与专用数据库 `my-atom-dev`。schema v3 的路径大小写写读已通过事务内冒烟，容器托管身份的基础项目读写已通过；账号权限的完整最小化审计、真实交付版本恢复及账单仍待验。迁移脚本只接受专用空库或本仓已标记的 schema，不能直接对未知现有数据执行。
 - `python -m backend.migrate_azure_sql` 将空库依次迁移到 schema v3，也允许已有 v2 库升级；v1 若已有版本记录则拒绝升级，必须先完成文件受控导入。v3 只修改 `version_files.relative_path` 的排序规则并重建其主键，不清空已有文件。迁移命令**不会创建或购买 Azure SQL Database**。应用启动只检查 schema v3 和路径列排序规则，不自动改表。已有任何用户表且未标记 MYATOM schema 的数据库会被拒绝，不能直接接管。容器运行身份只有读写权限，迁移须由数据库管理员单独执行，不能给运行身份长期加 `db_ddladmin`。
 - `APP_ENV=azure_demo`、`MYATOM_TRUSTED_DEMO=1`、`MYATOM_AZURE_SQL_CONNECTION_STRING` 为服务端配置。SQL 连接要求 `Encrypt=yes;TrustServerCertificate=no`。Azure 模式不设置 `MYATOM_DATABASE_URL`。访客模型 Key 在工作台自行输入，点击保存后写入当前浏览器 `localStorage`、刷新后恢复；服务器 Key 不下发。两类凭证均不得进仓库、日志或生成文件。见 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。
 - `MYATOM_DATA_DIR=/app/data` 指向容器自带的可写目录；**不配置外部 volumeMount**。启动只验证目录可写。该目录只承载临时工作区、候选和缓存；可用版本的源文件与预览文件必须在 Azure SQL。若应用连接 Azure SQL 失败，不得降级到 SQLite。
@@ -22,7 +22,7 @@
 
 ### 授权完成后的最小实测顺序
 
-1. 在 `my-atom-dev` 查询编辑器只读核对 `sys.database_principals`，确认容器身份已存在且有预期角色；不要把门户登录成功当成容器连接成功。当前本轮门户查询编辑器的 `QueryEditor.ReactView` 加载失败，因此授权状态仍以用户报告为准。
+1. 在 `my-atom-dev` 查询编辑器只读核对 `sys.database_principals`，确认容器身份已存在且有预期角色；不要把门户登录成功当成容器连接成功。本次管理员查询编辑器已连接并完成 v3 迁移；容器身份的完整角色核对仍待执行。
 2. 由数据库管理员在**专用测试库**按 `GO` 分批执行 v1、v2、v3；已有 v2 库只执行 [`azure_sql_v3.sql`](../backend/sql/azure_sql_v3.sql)。执行前核对备份、`SELECT MAX(version) FROM dbo.myatom_schema_version` 为 `2`、`version_files` 表及主键存在。执行后版本应为 `3`，`sys.columns` 中 `relative_path` 的 `collation_name` 应为 `Latin1_General_100_BIN2`。`myatom-azure-check` 运行身份只有读写权限，不能以它执行 DDL。若 v1 库已有版本记录，先停止并做受控文件导入，不能直接运行 v2。
    若执行旧 v1 在 `checkpoint VARBINARY(MAX)` 处报语法错误，使用本仓已改为 `[checkpoint]` 的 v1 文件重新执行，勿手工删表。v1 各建表/索引语句按存在性检查设计，可在同一专用库上续跑；先核对 `SELECT MAX(version) FROM dbo.myatom_schema_version`，确认 v1 标记成功后再执行 v2。Python 自动迁移器会拒绝接管“已有部分表但没有版本标记”的库，此时应由管理员核对并续跑 v1，而不是清空已有数据。
 3. `APP_ENV=azure_demo` 已上线。SQL Server 已开启“允许 Azure 服务和资源访问此服务器”，旧容器出口单 IP 规则已移除；此规则对所有 Azure 订阅开放网络尝试，数据库仍要求身份和权限，见 [ADR-027](decisions/ADR-027-azure-sql-trusted-demo-network.md)。移除旧规则后的基础项目写入与读回通过，不把它当作完整应用验收。
