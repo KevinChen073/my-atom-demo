@@ -41,6 +41,8 @@ def test_invitation_is_the_only_platform_key_grant_and_recovers_projects(tmp_pat
         assert visitor.get("/preview/open/unknown?ticket=fake").status_code == 401
         assert visitor.get("/api/versions/unknown").status_code == 401
         assert visitor.post("/api/auth/invite", json={"code": "incorrect-invitation-code-long-enough"}).status_code == 401
+        assert visitor.post("/api/auth/invite", json={"code": "错误邀请码"}).status_code == 401
+        assert visitor.post("/api/auth/invite", json={"code": "x" * 257}).status_code == 422
         login = visitor.post("/api/auth/invite", json={"code": CODE_A})
         assert login.status_code == 200
         assert "httponly" in login.headers["set-cookie"].lower()

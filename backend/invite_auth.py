@@ -36,7 +36,7 @@ class InviteAuth:
             self._failures[address] = failures
             if len(failures) >= 5:
                 return None
-        valid = bool(self._code) and hmac.compare_digest(code, self._code)
+        valid = bool(self._code) and hmac.compare_digest(code.encode("utf-8"), self._secret)
         if not valid:
             with self._lock:
                 self._failures[address].append(now)

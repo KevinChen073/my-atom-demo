@@ -36,7 +36,7 @@ class ProjectInput(BaseModel):
 
 
 class InviteInput(BaseModel):
-    code: str
+    code: str = Field(min_length=1, max_length=256)
 
 
 class RunInput(BaseModel):
