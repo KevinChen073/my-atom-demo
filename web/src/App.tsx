@@ -6,8 +6,10 @@ import { BudgetExtensionCard } from './BudgetExtensionCard'
 import type { BudgetChoice, BudgetData, BudgetKind } from './BudgetExtensionCard'
 import { withRunElapsed } from './runElapsed'
 import { ModelSettings } from './ModelSettings'
-import { currentModelConfig, modelRequestHeader } from './modelConfigStore'
+import { currentModelConfig, modelRequestHeader, setPlatformModel } from './modelConfigStore'
 import type { ModelConfig } from './modelConfigStore'
+import { InviteAccess } from './InviteAccess'
+import type { InviteSession } from './InviteAccess'
 import catalog from '../../examples/catalog.json'
 import brandLockup from '../../design/v3/icons/brand-lockup.svg'
 import brandMark from '../../design/v3/icons/brand-mark.svg'
@@ -190,6 +192,8 @@ function App() {
   const initialId = initialRoute.id
   const [projectId, setProjectId] = useState<string | null>(initialId)
   const [modelConfig, setModelConfig] = useState<ModelConfig | null>(currentModelConfig())
+  const [inviteSession, setInviteSession] = useState<InviteSession | null>(null)
+  const [platformModel, setPlatformModelChoice] = useState(false)
   const [projects, setProjects] = useState<ProjectSummary[]>([])
   const [listLoading, setListLoading] = useState(true)
   const [listError, setListError] = useState('')
@@ -260,10 +264,22 @@ function App() {
   const drawerReturnFocus = useRef<HTMLElement | null>(null)
   const rightHeadingRef = useRef<HTMLHeadingElement | null>(null)
   const run = project?.runs[0] || null
+  const platformAvailable = !!inviteSession?.platform_model_available
+  function changeInviteSession(next: InviteSession) {
+    const changedIdentity = inviteSession?.invited !== next.invited
+    setInviteSession(next)
+    setPlatformModelChoice(next.platform_model_available)
+    setPlatformModel(next.platform_model_available)
+    if (changedIdentity) {
+      if (inviteSession !== null && !next.invited) navigate(null)
+      else if (projectId) void refreshProject(projectId).catch(() => undefined)
+      void refreshList().catch(() => undefined)
+    }
+  }
   useEffect(() => {
-    if (!run || !modelConfig?.api_key || !['clarifying', 'planning', 'building'].includes(run.status)) return
+    if (!run?.needs_model_key || !modelConfig?.api_key || platformModel || !['clarifying', 'planning', 'building'].includes(run.status)) return
     api(`/runs/${run.id}/model`, { method: 'POST' }).catch(reason => setError((reason as Error).message))
-  }, [run?.id, run?.status, modelConfig])
+  }, [run?.id, run?.status, run?.needs_model_key, modelConfig, platformModel])
   const turns = run ? conversationTurns(events, (project?.decisions || []).filter(item => item.run_id === run.id), messages, run) : []
   const originalRequest = String(events.find(item => item.type === 'run_created')?.payload.request_text || run?.request_text || '')
   const documentRun = run?.plan ? run : project?.runs.find(item => item.approved_spec_version && item.plan) || null
@@ -357,7 +373,7 @@ function App() {
     const handleFailure = (err: unknown) => {
       if (activeProjectId.current !== projectId) return
       setSyncState('disconnected')
-      if (err instanceof ApiError && [403, 404].includes(err.status)) setAccessError(true)
+      if (err instanceof ApiError && [401, 403, 404].includes(err.status)) setAccessError(true)
     }
     refreshProject(projectId).catch(handleFailure)
     const timer = window.setInterval(() => refreshProject(projectId).catch(handleFailure), 6000)
@@ -694,7 +710,8 @@ function App() {
   async function create() {
     if (busy) return
     setError('')
-    if (!modelConfig?.api_key) { setError('请先在顶部的模型设置中填写 API Key。'); return }
+    if (inviteSession?.invite_required && !inviteSession.invited) { setError('请先输入邀请码，再创建项目。'); return }
+    if (!modelConfig?.api_key && !platformModel) { setError('请先填写自己的 API Key，或输入邀请码使用测试额度。'); return }
     if (requestText.trim().length < 10) { setError('请至少用 10 个字描述应用需求。'); return }
     setBusy(true)
     try {
@@ -717,7 +734,8 @@ function App() {
 
   async function submitNewRun() {
     if (!project || busy) return
-    if (!modelConfig?.api_key) { setError('请先在顶部的模型设置中填写 API Key。'); return }
+    if (inviteSession?.invite_required && !inviteSession.invited) { setError('请先输入邀请码，再提交需求。'); return }
+    if (!modelConfig?.api_key && !platformModel) { setError('请先填写自己的 API Key，或输入邀请码使用测试额度。'); return }
     if (requestText.trim().length < 10) { setError('请至少用 10 个字描述新需求。'); return }
     setBusy(true); setError('')
     try {
@@ -868,22 +886,23 @@ function App() {
       </div>}
       <nav className="sidebar-primary" aria-label="主导航"><button className={`all-projects-link ${!projectId && homeView === 'projects' ? 'active' : ''}`} onClick={() => openHome('projects')}>⌁ <span>所有项目</span></button><button className={`all-projects-link create-link ${!projectId && homeView === 'new' ? 'active' : ''}`} onClick={startNewProject}>＋ <span>新建项目</span></button></nav>
       <div className="sidebar-history"><div className="sidebar-label recent-label">历史项目 <span>{projects.length}</span></div><label className="side-search"><span className="sr-only">搜索历史项目</span><input value={sideSearch} onChange={event => setSideSearch(event.target.value)} placeholder="搜索项目" /></label><nav className="recent-projects" aria-label="历史项目">{visibleSideProjects.map(item => <button className={item.id === projectId ? 'selected' : ''} key={item.id} onClick={() => navigate(item.id)}><span className="project-icon" aria-hidden="true">{projectGlyph(item.title)}</span><span className="sidebar-project-copy"><strong>{item.title}</strong><small>{item.latest_status ? STATUS[item.latest_status] || item.latest_status : '尚未开始'}{item.latest_version_id ? ` · #${item.latest_version_id.slice(0, 8)}` : ''}</small></span></button>)}{!visibleSideProjects.length && <p className="sidebar-empty">{listLoading ? '正在加载项目…' : sideSearch ? '没有匹配的项目' : listError ? '项目列表暂不可用' : '还没有历史项目'}</p>}</nav></div>
-      <div className="sidebar-foot">访客空间{projectId && <button className="layout-reset" onClick={layout.reset} disabled={!layout.enabled}>恢复默认布局</button>}</div>
+      <div className="sidebar-foot">{inviteSession?.invited ? '邀请码测试空间' : '访客空间'}{projectId && <button className="layout-reset" onClick={layout.reset} disabled={!layout.enabled}>恢复默认布局</button>}</div>
     </aside>
     {projectId && <div className="layout-divider sidebar-divider" role="separator" tabIndex={0} aria-label="调整导航栏宽度" aria-orientation="vertical" aria-controls="project-sidebar project-main" aria-valuemin={layout.range.sidebarMin} aria-valuemax={layout.range.sidebarMax} aria-valuenow={layout.current.sidebar} aria-valuetext={`导航栏 ${Math.round(layout.current.sidebar)} 像素`} title="拖动调整导航宽度；方向键微调；双击恢复默认" onPointerDown={event => layout.start('sidebar', event)} onPointerMove={layout.move} onPointerUp={layout.finish} onPointerCancel={layout.cancel} onLostPointerCapture={layout.cancel} onKeyDown={event => layout.key('sidebar', event)} onDoubleClick={layout.reset} />}
     {showProjects && <button className="drawer-scrim" aria-label="关闭项目列表" onClick={() => setShowProjects(false)} />}
 
     <main id="project-main" className={`main ${!projectId ? 'home-main' : ''}`}>
       {!projectId ? <>
-        <header className="topbar"><div className="topbar-main"><button className="projects-toggle" onClick={openProjects} aria-label="打开项目列表">☰ <span>项目</span></button><strong>{homeView === 'new' ? '新建项目' : '所有项目'}</strong></div><div className="top-actions"><ModelSettings onChange={setModelConfig} /></div></header>
+        <header className="topbar"><div className="topbar-main"><button className="projects-toggle" onClick={openProjects} aria-label="打开项目列表">☰ <span>项目</span></button><strong>{homeView === 'new' ? '新建项目' : '所有项目'}</strong></div><div className="top-actions"><InviteAccess session={inviteSession} onChange={changeInviteSession} />{platformAvailable && <button type="button" aria-pressed={platformModel} onClick={() => { setPlatformModelChoice(!platformModel); setPlatformModel(!platformModel) }}>{platformModel ? '平台测试额度' : '切换至测试额度'}</button>}<ModelSettings onChange={setModelConfig} /></div></header>
         {homeView === 'new' ? <div className="welcome v7-home">
           <h1 aria-label="今天想做什么？"><span aria-hidden="true">{heroText}</span><span className="typing-caret" aria-hidden="true" /></h1>
+          {inviteSession?.invite_required && !inviteSession.invited && <p className="invite-home-notice" role="status">工作台可公开浏览。创建与预览项目需要先在右上角输入邀请码。</p>}
           <section className="start-project" aria-label="新项目需求"><div className="form-card"><label className="sr-only" htmlFor="project-request">描述你想创建的应用</label><textarea id="project-request" value={requestText} onChange={event => { setRequestText(event.target.value); editExampleDraft() }} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void create() } }} placeholder="例如：做一个可以安排番茄钟的待办应用…" maxLength={5000} rows={3} /><div className="start-bottom"><span className="request-count">{requestText.length}/5000</span><button className="primary" disabled={busy} onClick={create}>{busy ? '正在创建…' : '创建项目　→'}</button></div><details className="project-title-option"><summary>添加项目名称（可选）</summary><label htmlFor="project-title">项目名称</label><input id="project-title" value={title} onChange={event => { setTitle(event.target.value); editExampleDraft() }} placeholder="给项目起个名字" maxLength={100} /></details><div className="example-feedback" role="status" aria-live="polite">{exampleFeedback}</div></div></section>
           <section className="examples-panel" aria-labelledby="examples-heading"><h2 id="examples-heading">试试这些精选样例</h2><div className="example-list">{catalog.examples.map(example => <button type="button" className={`example-card ${selectedExampleId === example.id ? 'selected' : ''}`} aria-pressed={selectedExampleId === example.id} key={example.id} onClick={() => applyExample(example)}><strong>{example.title}</strong><span>{example.subtitle}</span><em>{selectedExampleId === example.id ? '✓ 已填入' : '↗'}</em></button>)}</div><p className="examples-note">样例只填入需求草稿，创建前仍可编辑。</p></section>
         </div> : <div className="welcome v7-projects"><section className="home-projects" aria-labelledby="home-projects-heading"><div className="home-projects-head"><div><span className="section-kicker">PROJECTS / 你的工作</span><h1 id="home-projects-heading">所有项目</h1><p>继续未完成的任务，或查看已保存的成果。</p></div><label className="home-search"><span className="sr-only">搜索项目</span><input value={homeSearch} onChange={event => setHomeSearch(event.target.value)} placeholder="搜索项目" /></label></div><div className="project-table"><div className="project-table-head"><span>项目</span><span>当前状态</span><span>最近版本</span><span>更新时间</span></div>{visibleHomeProjects.map(item => <button key={item.id} className="project-table-row" onClick={() => navigate(item.id)}><span className="project-title-cell"><span className="project-icon" aria-hidden="true">{projectGlyph(item.title)}</span><span><strong>{item.title}</strong><small>Web 应用项目</small></span></span><span>{item.latest_status ? STATUS[item.latest_status] || item.latest_status : '尚未开始'}</span><span>{item.latest_version_id ? `#${item.latest_version_id.slice(0, 8)}` : '—'}</span><span>{formatTime(item.updated_at)}　→</span></button>)}{!visibleHomeProjects.length && <div className="project-table-empty">{listLoading ? '正在加载项目…' : listError ? <>项目列表暂不可用：{listError} <button onClick={() => refreshList().catch(() => undefined)}>重试</button></> : homeSearch ? '没有匹配的项目。' : '还没有项目。写下第一条需求开始。'}</div>}</div><button className="secondary" onClick={startNewProject}>＋ 新建项目</button></section></div>}
       </> : <>
-        <header className="topbar project-topbar"><div className="topbar-main"><button className="projects-toggle" onClick={openProjects} aria-label="打开项目列表">☰ <span>项目</span></button><span className="identity-kicker">当前项目</span><button ref={switcherButtonRef} className="top-project-switch" aria-haspopup="dialog" aria-expanded={switcherOpen} onClick={() => setSwitcherOpen(value => !value)}>{project?.title || '正在加载项目'} <span aria-hidden="true">⌄</span></button><span className={`status-pill ${run?.status || ''}`}>{run ? STATUS[run.status] || run.status : version ? `代码已保存 · #${version.id.slice(0, 8)}` : '等待需求'}</span></div><div className="top-actions"><ModelSettings onChange={setModelConfig} />{(version || run?.plan || run?.card?.type === 'build_plan' || rightVisible) && <button onClick={() => { if (rightVisible) setRightMode('closed'); else if (!version) selectRightView('documents'); else setRightMode('open') }} aria-expanded={rightVisible} aria-controls="results-pane">{rightVisible ? '收起右侧' : version ? '查看应用' : '查看计划文档'}</button>}<button onClick={layout.reset} disabled={!layout.enabled}>恢复默认布局</button><span className="top-status" aria-live="polite"><small>{syncState === 'disconnected' ? '连接中断 · 任务可能仍在运行' : syncState === 'syncing' ? '正在同步服务端状态' : `已保存 ${formatTime(project?.updated_at)} · ${streamState === 'live' ? '实时连接' : streamState === 'polling' ? '定时更新' : streamState === 'connecting' ? '正在恢复连接' : '状态已同步'}`}</small></span></div></header>
-        {accessError ? <div className="empty-state" role="alert"><div className="empty-number">!</div><h3>无法打开此项目</h3><p>项目不存在，或当前访客没有访问权限。请检查项目链接与访问凭证。</p><button className="primary" onClick={() => navigate(null)}>返回首页</button></div> : <>
+        <header className="topbar project-topbar"><div className="topbar-main"><button className="projects-toggle" onClick={openProjects} aria-label="打开项目列表">☰ <span>项目</span></button><span className="identity-kicker">当前项目</span><button ref={switcherButtonRef} className="top-project-switch" aria-haspopup="dialog" aria-expanded={switcherOpen} onClick={() => setSwitcherOpen(value => !value)}>{project?.title || '正在加载项目'} <span aria-hidden="true">⌄</span></button><span className={`status-pill ${run?.status || ''}`}>{run ? STATUS[run.status] || run.status : version ? `代码已保存 · #${version.id.slice(0, 8)}` : '等待需求'}</span></div><div className="top-actions"><InviteAccess session={inviteSession} onChange={changeInviteSession} />{platformAvailable && <button type="button" aria-pressed={platformModel} onClick={() => { setPlatformModelChoice(!platformModel); setPlatformModel(!platformModel) }}>{platformModel ? '平台测试额度' : '切换至测试额度'}</button>}<ModelSettings onChange={setModelConfig} />{(version || run?.plan || run?.card?.type === 'build_plan' || rightVisible) && <button onClick={() => { if (rightVisible) setRightMode('closed'); else if (!version) selectRightView('documents'); else setRightMode('open') }} aria-expanded={rightVisible} aria-controls="results-pane">{rightVisible ? '收起右侧' : version ? '查看应用' : '查看计划文档'}</button>}<button onClick={layout.reset} disabled={!layout.enabled}>恢复默认布局</button><span className="top-status" aria-live="polite"><small>{syncState === 'disconnected' ? '连接中断 · 任务可能仍在运行' : syncState === 'syncing' ? '正在同步服务端状态' : `已保存 ${formatTime(project?.updated_at)} · ${streamState === 'live' ? '实时连接' : streamState === 'polling' ? '定时更新' : streamState === 'connecting' ? '正在恢复连接' : '状态已同步'}`}</small></span></div></header>
+        {accessError ? <div className="empty-state" role="alert"><div className="empty-number">!</div><h3>无法打开此项目</h3><p>{inviteSession?.invite_required && !inviteSession.invited ? '请先在右上角输入邀请码。' : '项目不存在，或当前测试身份没有访问权限。请检查项目链接与邀请码。'}</p><button className="primary" onClick={() => navigate(null)}>返回首页</button></div> : <>
         {(syncState === 'disconnected' || streamState === 'polling') && <div className="connection-banner" role="status"><span>{syncState === 'disconnected' ? `无法同步最新状态；上次同步 ${formatTime(lastSynced || undefined)}。任务可能仍在运行。` : '实时连接中断，正在用定时更新补齐活动。'}</span><button onClick={() => { setSyncState('syncing'); setStreamRetryKey(value => value + 1); refreshProject(projectId).catch(() => setSyncState('disconnected')) }}>重新连接</button></div>}
         {run?.needs_model_key && !modelConfig?.api_key && <div className="connection-banner" role="status">任务在等待模型 Key。请在顶部「模型设置」中保存 Key，页面会继续当前任务。</div>}
         <div className="mobile-tabs" aria-label="项目视图"><button className={mobileTab === 'process' ? 'active' : ''} aria-pressed={mobileTab === 'process'} onClick={() => setMobileTab('process')}>过程</button><button className={mobileTab === 'results' ? 'active' : ''} aria-pressed={mobileTab === 'results'} onClick={() => setMobileTab('results')}>结果</button></div>

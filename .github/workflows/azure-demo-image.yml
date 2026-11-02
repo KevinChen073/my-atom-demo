@@ -18,7 +18,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: python -m pip install -r requirements-azure.txt pytest httpx
-      - run: python -m pytest -q tests/test_azure_demo_runtime.py tests/test_azure_sql_adapter.py tests/test_azure_artifacts.py tests/test_azure_preview_files.py tests/test_azure_sql_migration.py tests/test_decision_idempotency.py
+      - run: python -m pytest -q tests/test_azure_demo_runtime.py tests/test_azure_sql_adapter.py tests/test_azure_artifacts.py tests/test_azure_preview_files.py tests/test_azure_sql_migration.py tests/test_decision_idempotency.py tests/test_invite_access.py tests/test_shared_origin_preview.py
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

@@ -10,6 +10,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Resp
 from .preview_access import PreviewAccess
 from .settings import Settings
 from .store import Conflict, NotFound, Store
+from .invite_auth import InviteAuth
 
 
 VERSION_ID = re.compile(r"^[0-9a-f-]{36}$")
@@ -35,6 +36,15 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
         store = Store(settings.app_db)
         access = PreviewAccess(settings.data_dir / "preview_access.sqlite3")
     app = FastAPI(title="MYATOM local preview", docs_url=None, redoc_url=None, openapi_url=None)
+    invite_auth = InviteAuth(settings.invite_code_hashes, settings.invite_session_secret)
+
+    def require_invite_project(request: Request, project_id: str) -> None:
+        if settings.app_env != "azure_demo":
+            return
+        code_hash = invite_auth.verify(request.cookies.get("myatom_test"))
+        if not code_hash:
+            raise HTTPException(status_code=401, detail="请先输入邀请码进入测试空间")
+        store.get_project(project_id, invite_auth.owner(code_hash))
 
     def expired_response() -> HTMLResponse:
         return HTMLResponse(
@@ -74,6 +84,7 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail="旧版应用不能在同源预览中打开")
         if version["project_id"] != project_id:
             raise HTTPException(status_code=403, detail="预览无权访问此项目")
+        require_invite_project(request, project_id)
         return version, project_id
 
     @app.get("/open/{version_id}")
@@ -81,6 +92,7 @@ def create_preview_app(settings: Settings | None = None) -> FastAPI:
         if not VERSION_ID.fullmatch(version_id):
             raise HTTPException(status_code=404, detail="版本不存在")
         version = store.get_version(version_id)
+        require_invite_project(request, version["project_id"])
         if version.get("manifest", {}).get("template") != "react-vite-v4":
             raise HTTPException(status_code=409, detail="旧版应用不能在同源预览中打开")
         session = access.consume_ticket(ticket, version_id)

@@ -1,0 +1,11 @@
+.invite-trigger { white-space: nowrap; }
+.invite-overlay { position: fixed; inset: 0; z-index: 110; display: grid; place-items: center; background: rgb(20 30 27 / 42%); padding: 20px; }
+.invite-dialog { width: min(100%, 420px); padding: 26px; background: #fffefa; border: 1px solid #cbd7ce; border-radius: 14px; box-shadow: 0 18px 60px rgb(0 0 0 / 15%); display: grid; gap: 14px; }
+.invite-head { display: flex; align-items: center; justify-content: space-between; }
+.invite-head h2 { margin: 0; font-size: 20px; }
+.invite-head button { border: 0; background: transparent; font-size: 22px; }
+.invite-dialog p { margin: 0; line-height: 1.5; }
+.invite-dialog input { width: 100%; padding: 10px; border: 1px solid #b9c9bf; border-radius: 7px; }
+.invite-dialog > button { justify-self: end; padding: 9px 16px; border: 0; border-radius: 7px; color: white; background: #145d50; }
+.invite-dialog .invite-error { color: #ad2c1b; }
+.invite-home-notice { margin: 0 0 1rem; color: var(--text-muted, #52625c); font-size: .875rem; }

@@ -5,6 +5,7 @@ import math
 import random
 import threading
 import time
+from datetime import datetime, timezone
 from typing import Any
 
 from openai import APIConnectionError, APIStatusError, APITimeoutError, OpenAI, RateLimitError
@@ -40,8 +41,36 @@ class ModelGateway:
         self.client = OpenAI(api_key=settings.model_api_key or "not-configured", base_url=settings.model_base_url, timeout=120)
         self._run_credentials: dict[str, ModelCredentials] = {}
         self._credentials_lock = threading.Lock()
+        from .invite_auth import InviteAuth
+        self._invite_hashes = InviteAuth(settings.invite_code_hashes, settings.invite_session_secret).allowed
+
+    def configure_platform_run(self, run_id: str, invite_hash: str) -> None:
+        if invite_hash not in self._invite_hashes or not self.settings.model_api_key:
+            raise RuntimeError("平台测试额度未配置")
+        self.store.operation_set(run_id, "platform_model_access", {"invite_hash": invite_hash})
+
+    def platform_quota_remaining(self, invite_hash: str) -> tuple[int, int]:
+        from .invite_auth import InviteAuth
+        if invite_hash not in self._invite_hashes:
+            raise RuntimeError("测试身份已失效")
+        today = datetime.now(timezone.utc).date().isoformat()
+        calls = tokens = 0
+        for project in self.store.list_projects(InviteAuth.owner(invite_hash)):
+            for run in self.store.get_project(project["id"], InviteAuth.owner(invite_hash))["runs"]:
+                access = self.store.operation_get(run["id"], "platform_model_access")
+                if str(run["created_at"]).startswith(today) and isinstance(access, dict) and access.get("invite_hash") == invite_hash:
+                    calls += run["model_calls"]
+                    tokens += run["tokens_used"]
+        return self.settings.invite_daily_model_calls - calls, self.settings.invite_daily_tokens - tokens
+
+    def check_platform_quota(self, invite_hash: str) -> int:
+        calls, tokens = self.platform_quota_remaining(invite_hash)
+        if calls <= 0 or tokens < 512:
+            raise RuntimeError("今日平台测试额度已用完，请使用自己的 API Key")
+        return tokens
 
     def configure_run(self, run_id: str, credentials: ModelCredentials) -> None:
+        self.store.operation_set(run_id, "platform_model_access", {})
         self.store.operation_set(run_id, "user_model_config", {"provider": credentials.provider,
             "base_url": credentials.base_url, "model_name": credentials.model_name, "needs_key": True})
         with self._credentials_lock:
@@ -73,15 +102,23 @@ class ModelGateway:
             raise BudgetExceeded("run_seconds", observed=math.ceil(elapsed), limit=limit)
 
     def generate(self, run_id: str, node: str, cache_key: str, system: str, user: str, *, max_tokens: int = 4000) -> dict[str, Any]:
-        cached = self.store.cache_get(run_id, node, cache_key)
-        if cached is not None:
-            return cached
         with self._credentials_lock:
             credentials = self._run_credentials.get(run_id)
         if credentials is None and self.store.operation_get(run_id, "user_model_config"):
             raise RuntimeError("模型 Key 需要重新提供，请打开模型设置并刷新任务")
+        platform_access = self.store.operation_get(run_id, "platform_model_access") if credentials is None else None
+        platform_allowed = (isinstance(platform_access, dict)
+                            and platform_access.get("invite_hash") in self._invite_hashes
+                            and bool(self.settings.model_api_key))
+        if credentials is None and self.settings.app_env == "azure_demo" and not platform_allowed:
+            raise RuntimeError("请先填写自己的 API Key，或使用有效邀请码登录")
+        if platform_allowed:
+            self.check_platform_quota(platform_access["invite_hash"])
         if credentials is None and not self.settings.model_api_key:
             raise RuntimeError("请先在模型设置中填写 API Key")
+        cached = self.store.cache_get(run_id, node, cache_key)
+        if cached is not None:
+            return cached
         client = (OpenAI(api_key=credentials.api_key, base_url=credentials.base_url, timeout=120)
                   if credentials else self.client)
         model_name = credentials.model_name if credentials else self.settings.model_name
@@ -102,6 +139,8 @@ class ModelGateway:
             total_token_limit = effective_limits(run_before_call)["total_tokens"]
             run_seconds_limit = effective_limits(run_before_call)["run_seconds"]
             remaining = total_token_limit - run_before_call["tokens_used"]
+            if platform_allowed:
+                remaining = min(remaining, self.check_platform_quota(platform_access["invite_hash"]))
             input_reserve = sum(len(message["content"]) for message in messages)
             call_max_tokens = min(request_max_tokens, remaining - input_reserve)
             if call_max_tokens < 512:

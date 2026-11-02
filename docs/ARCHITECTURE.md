@@ -22,7 +22,7 @@ flowchart LR
   H --> M[模型服务适配器]
 ```
 
-本地使用 Python API 服务和受控 worker，SQLite 保存平台记录、checkpoint、预览票据及完整版本文件，见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)。Azure 按 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 与 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 采用**受信演示**：主 API 容器内构建，容器自身 `/app/data` 只作临时工作区；平台记录、LangGraph checkpoint 与已提交版本的文本文件统一使用 Azure SQL；独立异常后台仍单独部署。`azure_demo` 完整工作台已上线；[ADR-027](decisions/ADR-027-azure-sql-trusted-demo-network.md) 采用允许 Azure 服务访问 SQL 的服务器规则，旧容器出口单 IP 规则已移除，项目创建与读回冒烟通过；完整 Azure 跨重启验收未通过。它不提供代码执行隔离，只允许获授权用户访问；匿名公网生产模式仍拒绝启动。实施与未验证边界见 [Azure 持久化](AZURE-PERSISTENCE.md)。浏览器不直接调用模型服务或读取服务器文件；本地模型设置接口可在严格 loopback 条件下返回 `.env` Key，两端均在用户点击保存后将 Key 写入当前浏览器的 `localStorage`，见 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。
+本地使用 Python API 服务和受控 worker，SQLite 保存平台记录、checkpoint、预览票据及完整版本文件，见 [ADR-024](decisions/ADR-024-sqlite-local-artifacts.md)。Azure 按 [ADR-021](decisions/ADR-021-azure-sql-platform-state.md) 与 [ADR-023](decisions/ADR-023-azure-sql-text-artifacts.md) 采用**受信演示**：主 API 容器内构建，容器自身 `/app/data` 只作临时工作区；平台记录、LangGraph checkpoint 与已提交版本的文本文件统一使用 Azure SQL；独立异常后台仍单独部署。`azure_demo` 完整工作台已上线；[ADR-027](decisions/ADR-027-azure-sql-trusted-demo-network.md) 采用允许 Azure 服务访问 SQL 的服务器规则，旧容器出口单 IP 规则已移除，项目创建与读回冒烟通过；完整 Azure 跨重启验收未通过。它不提供代码执行隔离。按 [ADR-031](decisions/ADR-031-public-invite-access.md)，目标是任意网络可打开首页，只有受信邀请码持有者可创建、生成和预览；匿名自带 Key 仍无生成权限。沿用同容器 Runner 与同源预览，不新增隔离资源；入口 IP 规则只有在授权门禁和在线冒烟通过后才移除。此模式不是面向不可信公众的代码执行服务。实施与未验证边界见 [Azure 持久化](AZURE-PERSISTENCE.md)。浏览器不直接调用模型服务或读取服务器文件；本地模型设置接口可在严格 loopback 条件下返回 `.env` Key，两端均在用户点击保存后将用户 Key 写入当前浏览器的 `localStorage`，见 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。
 
 下文的 `ProjectRepository`、checkpointer、事件表与异常库属于 **MYATOM 平台**，可以使用服务端数据库；生成交付物自己的业务数据限工作台共享 origin 下的浏览器 `localStorage`，键名前缀为 `myatom.app.<项目 UUID>.`。同一项目跨版本复用前缀；不同项目在正常读写路径中避免键名冲突，但同源代码可读写其他项目键和工作台保存的模型 Key，前缀不构成安全边界。见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md)。生成交付物若包含后端，只能有一个进程、一个监听端口，且不得用服务端数据库/缓存保存业务数据；MYATOM 的主 API、预览网关、独立异常后台不计入该限额。
 
@@ -38,7 +38,7 @@ flowchart LR
 | `ArtifactStore` | 按项目/运行/版本保存受控源码、文本构建资源与 manifest | SQLite `version_files` | Azure SQL `version_files` 为权威存储；容器 `/app/data` 为构建缓存。真实 Azure 数据库事务待验 |
 | `GeneratedAppStorage` | 在生成模板 `src/hooks/` 内封装 `myatom.app.<项目 UUID>.` 前缀、读写与键名校验；只存生成应用业务数据 | 本地已实现共享 origin 的浏览器存储，Azure 待验收 | 同 origin 的 Web 存储；不使用平台 DB/SQL/缓存保存交付物业务数据；前缀不是权限边界 |
 | `ModelGateway` | 统一消息、结构化输出、token 用量、超时、取消 | 用户 Key 或本地 `.env` 默认值 | 用户在浏览器配置 Key；服务端当前 run 内存使用，进程重启后重新提供；兼容性待测 |
-| `Runner` | 创建工作区、构建/测试、限额、停止、清理 | 本地同宿主可信开发 | Azure 受信演示在主容器内构建；隔离证据未通过前不开放公网生成 |
+| `Runner` | 创建工作区、构建/测试、限额、停止、清理 | 本地同宿主可信开发 | Azure 受信演示在主容器内构建；邀请码仅向受信测试者发放，不向匿名访客开放生成 |
 | `PreviewGateway` | 发布版本、返回受限 URL、停止/过期 | 本地已实现工作台同 origin 的 `/preview/...`；Azure 待验收 | Azure 默认 HTTPS FQDN 上的共享路径预览；服务端归属与短期会话仍需实测 |
 | `SecretProvider` | 服务端按环境取凭证 | 本地环境配置 | Azure 托管密钥；禁止注入生成项目 |
 

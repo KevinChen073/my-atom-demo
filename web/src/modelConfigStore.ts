@@ -22,6 +22,8 @@ export function readSavedModelConfig(): ModelConfig | null {
 }
 
 let activeConfig: ModelConfig | null = readSavedModelConfig()
+let usePlatformModel = false
+export function setPlatformModel(value: boolean): void { usePlatformModel = value }
 export function currentModelConfig(): ModelConfig | null { return activeConfig }
 export function setActiveModelConfig(config: ModelConfig | null, persist = false): boolean {
   if (persist) {
@@ -35,5 +37,5 @@ export function setActiveModelConfig(config: ModelConfig | null, persist = false
 }
 
 export function modelRequestHeader(): Record<string, string> {
-  return activeConfig?.api_key ? { 'X-Myatom-Model-Config': JSON.stringify(activeConfig) } : {}
+  return !usePlatformModel && activeConfig?.api_key ? { 'X-Myatom-Model-Config': JSON.stringify(activeConfig) } : {}
 }

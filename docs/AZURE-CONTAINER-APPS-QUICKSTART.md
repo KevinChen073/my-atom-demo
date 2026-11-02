@@ -71,7 +71,13 @@ az containerapp up `
 | 预览与入口 | 本地同源 `/preview/...` 路由、票据与项目 ID 注入定向测试通过 | Azure 默认 HTTPS FQDN 同 origin 的 `/preview/...` 路径与 `myatom.app.<项目 UUID>.*` 存储前缀；需在线验证票据/刷新读回及入口认证/IP 允许列表。前缀不构成安全隔离，详见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) |
 | 模型与密钥 | 工作台可输入 DeepSeek / OpenAI 兼容 API Key，本地 `.env` 可预填 | 本地与 Azure 均在点击保存后将用户 Key 写入当前浏览器 `localStorage`，刷新后恢复；见 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。主 API 不持久保存 Key；真实模型测试需用户提供测试 Key |
 
-受信演示配置为 `APP_ENV=azure_demo`、`MYATOM_TRUSTED_DEMO=1`、`MYATOM_AZURE_SQL_CONNECTION_STRING`、`WORKBENCH_ORIGIN`（Container Apps 默认 HTTPS FQDN）、`MYATOM_DATA_DIR=/app/data`；不需要 `PREVIEW_BASE_DOMAIN`。同源路由本地定向测试通过，Azure 首页已打开，真实产物预览仍待验证。用户在工作台填写模型 Key，服务器 `MODEL_API_KEY` 不设置；Azure 页面刷新后恢复已保存 Key；同源预览脚本可读取这一保存键，风险见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) 与 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。Azure SQL 连接加密并验证证书，不设置 `MYATOM_DATABASE_URL`。入口 IP 允许列表已配置，但从非允许 IP 的拒绝响应尚未实测。实际访问参数和凭证不写进仓库。
+受信演示配置为 `APP_ENV=azure_demo`、`MYATOM_TRUSTED_DEMO=1`、`MYATOM_AZURE_SQL_CONNECTION_STRING`、`WORKBENCH_ORIGIN`（Container Apps 默认 HTTPS FQDN）、`MYATOM_DATA_DIR=/app/data`；不需要 `PREVIEW_BASE_DOMAIN`。同源路由本地定向测试通过，Azure 首页已打开，真实产物预览仍待验证。用户在工作台填写自己的模型 Key 时，Azure 页面刷新后恢复已保存 Key；同源预览脚本可读取这一保存键，风险见 [ADR-026](decisions/ADR-026-shared-origin-project-storage.md) 与 [ADR-028](decisions/ADR-028-browser-model-key-both-environments.md)。2026-11-02 用户已在容器环境注入 `MODEL_API_KEY` 与 `MODEL_NAME`，在线健康接口显示模型 Key 非空，默认模型接口显示 `deepseek-chat`；真实模型调用仍待验证，且现在线上镜像尚无邀请码门禁，入口 IP 限制必须保持。Azure SQL 连接加密并验证证书，不设置 `MYATOM_DATABASE_URL`。入口 IP 允许列表已配置，但从非允许 IP 的拒绝响应尚未实测。实际访问参数和凭证不写进仓库。
+
+## 公开访问准备：邀请码与平台模型 Key（尚未部署）
+
+[ADR-031](decisions/ADR-031-public-invite-access.md) 规定仅凭邀请码进入测试身份。用密码学安全随机源为每个独立项目空间生成至少 32 字节随机码，私下发给测试者；容器 Secret `MYATOM_INVITE_CODE_HASHES` 只配置各邀请码的 SHA-256 十六进制摘要，以英文逗号分隔。另配独立、至少 32 字符的 `MYATOM_INVITE_SESSION_SECRET` Secret，跨容器修订保持不变。平台模型 Key 用 Container App Secret 注入 `MODEL_API_KEY`，不通过前端接口下发。`MYATOM_INVITE_DAILY_MODEL_CALLS` 和 `MYATOM_INVITE_DAILY_TOKENS` 分别设置每码每日上限，当前默认值 120 次与 1000000 Token。移除摘要并重新部署会撤销对应会话。
+
+目标方案 A：任意网络可访问首页，只有有效邀请码持有者可创建、生成、读取项目与预览；匿名访客即使自带 Key 也不能生成。持码者可使用平台额度或自带 Key。代码已加入这些服务端门禁，仍须完成本地与 Azure 冒烟后才能调整入口 IP 规则。沿用主 API 容器构建与同源预览，不创建隔离 Job；邀请码只发给受信测试者，不能把此模式作为不可信公众生成服务。后续若扩大生成范围，按 [ADR-031](decisions/ADR-031-public-invite-access.md) 重新设计隔离。
 
 ### 3.1.1 容器临时工作区与运行参数
 

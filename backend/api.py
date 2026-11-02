@@ -23,14 +23,20 @@ from .store import Conflict, NotFound, Store
 from .workflow import Workflow
 from .model import ModelGateway
 from .model_credentials import validate_model_credentials
+from .invite_auth import InviteAuth
 
 
 COOKIE = "myatom_guest"
+INVITE_COOKIE = "myatom_test"
 logger = logging.getLogger(__name__)
 
 
 class ProjectInput(BaseModel):
     title: str = Field(min_length=1, max_length=100)
+
+
+class InviteInput(BaseModel):
+    code: str
 
 
 class RunInput(BaseModel):
@@ -101,6 +107,7 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
         preview_access = PreviewAccess(settings.data_dir / "preview_access.sqlite3")
     workflow = Workflow(settings, store, model=model)
     messages = MessageService(store, workflow)
+    invite_auth = InviteAuth(settings.invite_code_hashes, settings.invite_session_secret)
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
@@ -118,6 +125,21 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     app.state.store = store
     app.state.workflow = workflow
     app.state.messages = messages
+
+    @app.middleware("http")
+    async def azure_invite_boundary(request: Request, call_next):
+        if settings.app_env == "azure_demo":
+            path = request.url.path
+            protected = (path == "/api/model/test"
+                         or path == "/api/projects" and request.method != "GET"
+                         or path.startswith("/api/projects/")
+                         or path.startswith("/api/runs/")
+                         or path.startswith("/api/versions/")
+                         or path == "/preview" or path.startswith("/preview/"))
+            if protected and not invite_auth.verify(request.cookies.get(INVITE_COOKIE)):
+                return JSONResponse({"detail": "请先输入邀请码进入测试空间"}, status_code=401,
+                                    headers={"Cache-Control": "no-store"})
+        return await call_next(request)
 
     if settings.app_env == "container_smoke":
         @app.middleware("http")
@@ -145,11 +167,23 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
         return JSONResponse({"detail": "服务暂时无法完成请求，请稍后重试。", "trace_id": trace_id},
                             status_code=500, headers={"X-Trace-ID": trace_id})
 
-    def require_owner(request: Request) -> str:
+    def active_invite(request: Request) -> str | None:
+        return invite_auth.verify(request.cookies.get(INVITE_COOKIE))
+
+    def current_owner(request: Request) -> str | None:
+        invited = active_invite(request)
+        if invited:
+            return invite_auth.owner(invited)
         token = request.cookies.get(COOKIE)
-        if not token:
+        return owner_hash(token) if token else None
+
+    def require_owner(request: Request) -> str:
+        if settings.app_env == "azure_demo" and not active_invite(request):
+            raise HTTPException(status_code=401, detail="请先输入邀请码进入测试空间")
+        owner = current_owner(request)
+        if not owner:
             raise HTTPException(status_code=401, detail="请先创建项目以建立访客身份")
-        return owner_hash(token)
+        return owner
 
     def project_access(request: Request, project_id: str) -> dict[str, Any]:
         return store.get_project(project_id, require_owner(request))
@@ -190,6 +224,29 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     def health():
         return {"ok": True, "model_configured": bool(settings.model_api_key), "app_env": settings.app_env}
 
+    @app.get("/api/auth/session")
+    def auth_session(request: Request):
+        invited = active_invite(request)
+        return {"invited": bool(invited), "platform_model_available": bool(invited and settings.model_api_key),
+                "invite_required": settings.app_env == "azure_demo"}
+
+    @app.post("/api/auth/invite")
+    def accept_invite(body: InviteInput, request: Request, response: Response):
+        address = request.client.host if request.client else "unknown"
+        invited = invite_auth.authenticate(body.code.strip(), address)
+        if not invited:
+            raise HTTPException(status_code=401, detail="邀请码无效或尝试过于频繁")
+        response.set_cookie(INVITE_COOKIE, invite_auth.issue(invited), httponly=True,
+                            samesite="strict", secure=settings.app_env != "local", max_age=60 * 60 * 24 * 30)
+        return {"invited": True, "platform_model_available": bool(settings.model_api_key),
+                "invite_required": settings.app_env == "azure_demo"}
+
+    @app.post("/api/auth/logout")
+    def leave_invite(response: Response):
+        response.delete_cookie(INVITE_COOKIE, httponly=True, samesite="strict", secure=settings.app_env != "local")
+        return {"invited": False, "platform_model_available": False,
+                "invite_required": settings.app_env == "azure_demo"}
+
     @app.get("/api/model/defaults")
     def model_defaults(request: Request):
         local_client = False
@@ -224,16 +281,22 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
 
     @app.get("/api/projects")
     def list_projects(request: Request):
-        token = request.cookies.get(COOKIE)
-        return {"projects": store.list_projects(owner_hash(token)) if token else []}
+        if settings.app_env == "azure_demo" and not active_invite(request):
+            return {"projects": []}
+        owner = current_owner(request)
+        return {"projects": store.list_projects(owner) if owner else []}
 
     @app.post("/api/projects", status_code=201)
     def create_project(body: ProjectInput, request: Request, response: Response):
         if not body.title.strip():
             raise HTTPException(status_code=422, detail="请填写项目名称")
+        invited = active_invite(request)
+        if settings.app_env == "azure_demo" and not invited:
+            raise HTTPException(status_code=401, detail="请先输入邀请码进入测试空间")
         token = request.cookies.get(COOKIE) or secrets.token_urlsafe(32)
-        project = store.create_project(owner_hash(token), body.title.strip())
-        response.set_cookie(COOKIE, token, httponly=True, samesite="lax", secure=settings.app_env != "local", max_age=60 * 60 * 24 * 90)
+        project = store.create_project(invite_auth.owner(invited) if invited else owner_hash(token), body.title.strip())
+        if not invited:
+            response.set_cookie(COOKIE, token, httponly=True, samesite="lax", secure=settings.app_env != "local", max_age=60 * 60 * 24 * 90)
         return project
 
     @app.get("/api/projects/{project_id}")
@@ -245,13 +308,25 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     @app.post("/api/projects/{project_id}/runs", status_code=201)
     def create_run(project_id: str, body: RunInput, request: Request, idempotency_key: str | None = Header(default=None)):
         project_access(request, project_id)
-        request_credentials(request)
+        credentials = request_credentials(request)
+        invited = active_invite(request)
+        if settings.app_env == "azure_demo" and not invited:
+            raise HTTPException(status_code=401, detail="请先输入邀请码进入测试空间")
+        if settings.app_env == "azure_demo" and not credentials and not settings.model_api_key:
+            raise HTTPException(status_code=403, detail="平台测试 Key 尚未配置，请在模型设置中填写自己的 API Key")
+        if credentials is None and invited and isinstance(workflow.model, ModelGateway):
+            try:
+                workflow.model.check_platform_quota(invited)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=429, detail=str(exc)) from None
         if not body.request_text.strip() or len(body.request_text.strip()) < 10:
             raise HTTPException(status_code=422, detail="请至少用 10 个字描述应用需求")
         run, created = store.create_run(project_id, body.request_text.strip(), idempotency_key or str(uuid.uuid4()),
             limits={"model_calls": settings.max_model_calls, "total_tokens": settings.max_total_tokens,
                     "run_seconds": settings.max_run_seconds, "fix_rounds": settings.max_fix_rounds}, mode=body.mode)
         configure_run_from_request(request, run["id"])
+        if credentials is None and invited and isinstance(workflow.model, ModelGateway):
+            workflow.model.configure_platform_run(run["id"], invited)
         if created:
             workflow.enqueue(run["id"])
         return {"run": run, "created": created}
@@ -263,7 +338,8 @@ def create_app(settings: Settings | None = None, model: Any = None) -> FastAPI:
     @app.post("/api/runs/{run_id}/model")
     def restore_run_model(run_id: str, request: Request):
         run = run_access(request, run_id)
-        if not request.headers.get("x-myatom-model-config"):
+        if (not request.headers.get("x-myatom-model-config")
+                and not (active_invite(request) and store.operation_get(run_id, "platform_model_access"))):
             raise HTTPException(status_code=422, detail="请先在模型设置中填写 API Key")
         if run["status"] in {"clarifying", "planning", "building"}:
             workflow.enqueue(run_id)
