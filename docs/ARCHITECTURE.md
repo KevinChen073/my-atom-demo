@@ -126,9 +126,12 @@ flowchart TD
   WaitPlan -->|确认| Prepare
   Prepare --> CodeLoop
   CodeLoop --> ValidateSource
-  ValidateSource -->|通过并写入工作区| BuildTest
+  ValidateSource -->|通过并写入工作区| BusinessDataCheck
   ValidateSource -->|可修复且未触发停机条件| CodeLoop
   ValidateSource -->|无进展/循环/预算或安全停止| NeedsUser
+  BusinessDataCheck -->|读写接线符合批准计划| BuildTest
+  BusinessDataCheck -->|缺少接线且仍可修复| CodeLoop
+  BusinessDataCheck -->|无进展/循环/预算| NeedsUser
   BuildTest -->|源码错误且未触发停机条件| Diagnose --> CodeLoop
   BuildTest -->|成功| PackageCandidate --> PreviewCheck --> CommitVersion --> Done
   BuildTest -->|不可修复/连续无进展/循环/达60轮| NeedsUser
@@ -149,6 +152,7 @@ flowchart TD
 | `Prepare` | 已确认计划 → 固定模板快照、工作区、任务游标 | 幂等创建工作区；保存模板版本与 manifest |
 | `CodeLoop` | 已批准需求与检查反馈 → 一份候选缓存引用 | 固定模板生成节点，不建立通用 CodeAgent 子图。问题全部定位到具体生成文件时仅输出这些文件，合并前一候选；否则输出完整映射。必含 `src/App.tsx`、`src/app.css`、根目录 `readme.md`；简单状态与业务逻辑可写在 App 或组件，复杂时再拆到 `src/hooks/`；最多 12 个生成文件、6 个组件、4 个 hook、180 KB 总量。源码布局放宽见 [ADR-029](decisions/ADR-029-generated-source-layout-relaxation.md) |
 | `ValidateSource` | 候选引用 → 受控问题/反馈/具体文件或完整重生建议 | 确定性校验完整候选；只有通过才幂等写工作区并进入构建。失败保存问题码、目标文件和尝试编号，不把源码放进 checkpoint；和构建修复共用 60 轮及无进展/复现停机条件 |
+| `BusinessDataCheck` | 已批准计划的 `business_data` 与候选源码 → 读写接线证据或定向反馈 | 需要保存业务数据时检查 `generatedAppStorage.getItem/setItem`；缺失回 `CodeLoop` 并复用修复上限。仅为 `source_contract_only`，不宣称浏览器真实保存；结果进入事件、manifest 与测试卡。见 [ADR-034](decisions/ADR-034-business-data-source-gate.md) |
 | `BuildTest` | 工作区 → 构建、诊断摘要及错误指纹 | 每轮保存错误集合、停机代码、失败命令与日志引用；依赖安装/环境故障不进代码修复 |
 | `Diagnose` | 仅源码编译/类型错误 → 修复任务 | **回退分支**到 `CodeLoop`；能从构建证据定位生成文件则局部重生；源码校验与构建修复合计最多 60 轮，最近 3 次错误集合相同或某具体错误第 5 次出现则提前交人工 |
 | `PackageCandidate` | 通过的工作区 → 候选源码/构建产物、hash、manifest | 候选目录独立于可用版本，不占 5 版额度 |
@@ -182,6 +186,7 @@ API 读 run 时补充服务端 `active_elapsed_seconds` 与 `execution_running`�
 | Intake / Clarify / Plan | 读取项目事实、模板元数据；模型生成结构化卡片 | 写文件、执行命令、外网、发布 |
 | Prepare / CodeLoop | 服务端复制固定模板；模型只返回受限候选文件映射 | 模型直接列目录、读文件、调用 shell、写文件或读取密钥 |
 | ValidateSource | 确定性检查候选；整份通过后 Runner 在指定工作区幂等写文件 | 未通过校验就写工作区，修改主仓库或宿主任意路径 |
+| BusinessDataCheck | 读取已批准计划与受控候选源码，记录接线检查证据 | 把静态源码检查冒充浏览器读写通过，或访问用户浏览器数据 |
 | BuildTest / Diagnose | Runner 执行固定的 `npm ci --ignore-scripts` 与 `npm run build`；服务端读取诊断并定位文件 | 模型自选命令、环境故障时自动重写源码 |
 | Package / Preview | Runner 打包候选并检查静态预览资源 | 模型直接操作部署凭据或平台管理接口 |
 

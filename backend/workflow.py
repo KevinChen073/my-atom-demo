@@ -19,6 +19,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 
 from .build_harness import build_repair_feedback, error_fingerprints, repair_stop_reason
+from .business_data_check import inspect_business_data
 from .budget import EXTENSION_STEPS, effective_limits
 from .model import BudgetExceeded, ModelGateway, ModelOutputError, RunCancelled
 from .exceptions import (MODEL_OUTPUT_REASONS, PLAN_VALIDATION_REASONS, PlanValidationError, REASONS,
@@ -60,6 +61,8 @@ class RunState(TypedDict, total=False):
     build_stop_code: str
     source_stop_code: str
     source_ok: bool
+    business_data_ok: bool | None
+    business_data_result: dict[str, Any]
     source_feedback: dict[str, Any]
     code_feedback: dict[str, Any]
     source_candidate_ref: str
@@ -152,7 +155,7 @@ def build_failure_summary(events: list[dict[str, Any]], diagnosis: dict[str, Any
 def source_failure_summary(events: list[dict[str, Any]], stop_reason: str, fix_rounds: int) -> dict[str, Any]:
     attempts = []
     for event in events:
-        if event["type"] != "source_validation_failed":
+        if event["type"] not in {"source_validation_failed", "business_data_check_failed"}:
             continue
         payload = event["payload"]
         if payload.get("issues"):
@@ -163,12 +166,13 @@ def source_failure_summary(events: list[dict[str, Any]], stop_reason: str, fix_r
         else:
             descriptions = [SOURCE_FAILURE_REASONS.get(code, SOURCE_FAILURE_REASONS["invalid_source"])
                             for code in payload.get("reason_codes", [payload.get("reason_code")])]
-        attempts.append({"number": len(attempts) + 1, "command": "源码校验",
+        attempts.append({"number": len(attempts) + 1, "command": "业务数据检查" if event["type"] == "business_data_check_failed" else "源码校验",
                          "error": "；".join(descriptions[:3])})
-    return {"stage": "source_validation", "cause": stop_reason or "生成源码未通过规则校验。",
+    return {"stage": "business_data_check" if attempts and attempts[-1]["command"] == "业务数据检查" else "source_validation",
+            "cause": stop_reason or "生成源码未通过规则校验。",
             "latest_error": attempts[-1]["error"] if attempts else "源码校验未通过",
             "attempts": attempts[-5:], "total_attempts": len(attempts),
-            "automatic_repairs": fix_rounds, "command": "源码校验", "evidence_ref": ""}
+            "automatic_repairs": fix_rounds, "command": attempts[-1]["command"] if attempts else "源码校验", "evidence_ref": ""}
 
 
 def normalize_plan(raw: dict[str, Any]) -> dict[str, Any]:
@@ -194,6 +198,25 @@ def normalize_plan(raw: dict[str, Any]) -> dict[str, Any]:
         "limitations": plan_items("limitations", 32),
         "entities": [],
         "template": "React + TypeScript + Vite",
+    }
+    storage_raw = raw.get("business_data")
+    if storage_raw is not None and (not isinstance(storage_raw, dict) or not isinstance(storage_raw.get("required"), bool)):
+        raise ValueError("业务数据保存说明格式无效")
+    if storage_raw is not None and isinstance(storage_raw.get("fields"), list) and len(storage_raw["fields"]) > 16:
+        raise ValueError("业务数据字段超过 16 项，不能静默截断")
+    inferred = any(re.search(r"localStorage|项目存储适配器", item, re.I) for item in plan["data_model"])
+    required = storage_raw["required"] if storage_raw is not None else inferred
+    if inferred and not required:
+        raise ValueError("数据模型要求本地保存，但业务数据说明声明无需保存")
+    fields = text_items(storage_raw.get("fields"), 16) if storage_raw else []
+    if storage_raw is not None and required and not fields:
+        raise ValueError("业务数据保存说明必须列出需要保存的字段")
+    plan["business_data"] = {
+        "required": required,
+        "fields": fields or (plan["data_model"] if required else []),
+        "storage": "项目存储适配器 → 当前浏览器 localStorage" if required else "无需保存业务数据",
+        "verification": "操作后刷新并重新进入同项目，确认数据读回；写入失败须明确提示" if required else "无跨刷新业务数据验收",
+        "limitations": "只在当前浏览器保留；清除站点数据或换浏览器无法恢复；代码回滚不回滚业务数据" if required else "仅保持页面内临时状态",
     }
     if not plan["features"] or not plan["acceptance"]:
         raise ValueError("模型计划缺少功能或验收点")
@@ -231,6 +254,12 @@ def merge_iteration_plan(raw: dict[str, Any], base: dict[str, Any]) -> dict[str,
     delta["features"] = unique(retained + changed + added)
     for key in ("data_model", "acceptance", "tasks", "limitations"):
         delta[key] = unique(previous[key] + delta[key])
+    if previous["business_data"]["required"]:
+        delta["business_data"]["required"] = True
+        delta["business_data"]["fields"] = unique(previous["business_data"]["fields"] + delta["business_data"]["fields"])
+        delta["business_data"]["storage"] = previous["business_data"]["storage"]
+        delta["business_data"]["verification"] = previous["business_data"]["verification"]
+        delta["business_data"]["limitations"] = previous["business_data"]["limitations"]
     if len(delta["features"]) > 32 or len(delta["acceptance"]) > 48 or any(len(delta[key]) > 32 for key in ("data_model", "tasks", "limitations")):
         raise ValueError("累计需求超过当前单应用计划容量，请缩减本轮范围")
     delta["pages"] = previous["pages"] + [page for page in delta["pages"] if page not in previous["pages"]]
@@ -282,6 +311,7 @@ class Workflow:
             ("clarity_gate", self.clarity_gate),
             ("plan", self.plan), ("wait_plan", self.wait_plan),
             ("prepare", self.prepare), ("code_loop", self.code_loop), ("validate_source", self.validate_source),
+            ("business_data_check", self.business_data_check),
             ("build_test", self.build_test), ("diagnose", self.diagnose),
             ("package_candidate", self.package_candidate), ("preview_check", self.preview_check),
             ("commit_version", self.commit_version), ("needs_user", self.needs_user),
@@ -296,7 +326,8 @@ class Workflow:
         builder.add_conditional_edges("wait_plan", lambda s: "prepare" if s.get("plan_action") == "approve_plan" else "plan", {"prepare": "prepare", "plan": "plan"})
         builder.add_edge("prepare", "code_loop")
         builder.add_edge("code_loop", "validate_source")
-        builder.add_conditional_edges("validate_source", self.route_source, {"code_loop": "code_loop", "build_test": "build_test", "needs_user": "needs_user"})
+        builder.add_conditional_edges("validate_source", self.route_source, {"code_loop": "code_loop", "business_data_check": "business_data_check", "needs_user": "needs_user"})
+        builder.add_conditional_edges("business_data_check", self.route_business_data, {"code_loop": "code_loop", "build_test": "build_test", "needs_user": "needs_user"})
         builder.add_conditional_edges("build_test", self.route_build, {"package_candidate": "package_candidate", "diagnose": "diagnose", "needs_user": "needs_user"})
         builder.add_edge("diagnose", "code_loop")
         builder.add_edge("package_candidate", "preview_check")
@@ -412,10 +443,11 @@ class Workflow:
         )
         if incompatible_request:
             raise PlanValidationError("incompatible_request")
-        system = ("你是 Web 应用架构师。输出 JSON：title、pages（name/purpose）、features、data_model、acceptance、tasks、limitations。"
-                  "数组成员除 pages 外均为字符串。固定 React+TypeScript+Vite；生成应用业务数据只通过项目存储适配器使用共享 origin 的 localStorage，"
+        system = ("你是 Web 应用架构师。输出 JSON：title、pages（name/purpose）、features、data_model、acceptance、tasks、limitations、business_data（required 布尔值、fields 字符串数组）。"
+                  "数组成员除 pages 和 business_data 外均为字符串；business_data.fields 是字符串数组。固定 React+TypeScript+Vite；生成应用业务数据只通过项目存储适配器使用共享 origin 的 localStorage，"
                   "同一项目跨版本复用该 origin。不得设计服务端业务 CRUD、SQL、缓存、外部接口或第三方库。"
-                  "若需求要刷新后保留业务数据，data_model 必须逐项写明由 localStorage 保存的字段，acceptance 必须包含刷新读回；不能把数据模型留空或只写页面状态。"
+                  "凡用户可新增、编辑、删除或积累的业务记录，business_data.required=true，fields 逐项列明应保存的字段；只有纯静态页面或无需保留的临时界面状态才为 false。"
+                  "若需保存业务数据，data_model 必须逐项写明由项目存储适配器和 localStorage 保存的字段，acceptance 必须包含操作后刷新读回及写入失败提示；不能把数据模型留空或只写页面状态。"
                   "limitations 不得与前述存储方案冲突；浏览器清除存储或更换浏览器后数据无法恢复，业务数据不随代码版本回滚。"
                   "源码采用 src/App.tsx 入口、src/app.css 样式入口；简单状态和业务逻辑可直接放在 App.tsx，复杂逻辑可拆到 src/hooks/，多组件可拆到 src/components/；根目录 readme.md 描述项目。计划须具体可测试。")
         if base_spec:
@@ -449,6 +481,10 @@ class Workflow:
                     if any(re.search(r"(?:不使用|不用|禁止|不得|避免|不采用).{0,8}(?:浏览器存储|本地存储|localStorage)", item, re.IGNORECASE)
                            for item in plan["limitations"]):
                         raise ValueError("计划限制与 localStorage 持久化边界冲突")
+                if plan["business_data"]["required"] and not any(re.search(r"localStorage", item, re.I) for item in plan["data_model"]):
+                    raise ValueError("业务数据保存说明要求持久化，但数据模型未列出 localStorage 字段")
+                if persistence_requested and not plan["business_data"]["required"]:
+                    raise ValueError("需求要求数据持久化，但业务数据保存说明声明无需保存")
                 break
             except ValueError as exc:
                 last_error = exc
@@ -593,7 +629,7 @@ class Workflow:
             self.store.update_run(run_id, event_type="source_validation_passed", event_payload={
                 "candidate": state["candidate_number"], "mode": mode, "modified_files": targets if targets else sorted(files),
             })
-            return {"source_ok": True, "source_candidate_ref": candidate_ref, "source_feedback": {},
+            return {"source_ok": True, "business_data_ok": None, "source_candidate_ref": candidate_ref, "source_feedback": {},
                     "code_feedback": {}, "source_stop_code": "", "stop_reason": "", "written_files": written}
         feedback = repair_feedback(issues, origin="source")
         history = self._repair_history(state)
@@ -611,7 +647,7 @@ class Workflow:
             "reason_codes": [issue["code"] for issue in issues], "target_files": feedback["target_files"],
             "issues": feedback["issues"], "mode": feedback["mode"], "stop_code": stop_code,
         })
-        return {"source_ok": False, "source_candidate_ref": candidate_ref,
+        return {"source_ok": False, "business_data_ok": None, "source_candidate_ref": candidate_ref,
                 "source_feedback": feedback, "code_feedback": feedback,
                 "repair_failure_history": history, "fix_rounds": next_round,
                 "source_stop_code": stop_code, "stop_reason": stop_reason}
@@ -619,6 +655,42 @@ class Workflow:
     @staticmethod
     def route_source(state: RunState) -> str:
         if state.get("source_ok"):
+            return "business_data_check"
+        return "needs_user" if state.get("source_stop_code") else "code_loop"
+
+    def business_data_check(self, state: RunState) -> dict[str, Any]:
+        """Check approved persistence wiring before spending time on another build."""
+        run_id = state["run_id"]
+        self._check_cancel(run_id)
+        self.store.update_run(run_id, phase="BusinessDataCheck", event_type="phase",
+                              event_payload={"phase": "BusinessDataCheck"})
+        candidate = self.store.cache_get(run_id, "source_candidate", state.get("source_candidate_ref", ""))
+        files = (candidate or {}).get("files")
+        if not isinstance(files, dict):
+            raise RuntimeError("候选源码已丢失，无法检查业务数据保存")
+        result = inspect_business_data(files, state["plan"])
+        self.store.update_run(run_id, event_type="business_data_check", event_payload=result)
+        if result["ok"]:
+            return {"business_data_ok": True, "business_data_result": result,
+                    "source_ok": True, "source_stop_code": "", "stop_reason": ""}
+        feedback = repair_feedback(result["issues"], origin="business_data")
+        history = self._repair_history(state)
+        history.append(source_signatures(result["issues"]))
+        stop_reason, stop_code = repair_stop_reason(history, state.get("fix_rounds", 0),
+                                                    effective_limits(self.store.get_run(run_id))["fix_rounds"], stage="业务数据检查")
+        if state.get("repair_action"):
+            stop_reason, stop_code = "本次人工指定修复仍未补齐业务数据保存，请检查反馈。", "manual_attempt_failed"
+        next_round = state.get("fix_rounds", 0) if stop_code else state.get("fix_rounds", 0) + 1
+        self.store.update_run(run_id, fix_rounds=next_round, event_type="business_data_check_failed",
+                              event_payload={"issues": feedback["issues"], "target_files": feedback["target_files"],
+                                             "stop_code": stop_code, "attempt": state.get("candidate_number", 0)})
+        return {"business_data_ok": False, "business_data_result": result, "source_ok": False,
+                "source_feedback": feedback, "code_feedback": feedback, "source_stop_code": stop_code,
+                "stop_reason": stop_reason, "repair_failure_history": history, "fix_rounds": next_round}
+
+    @staticmethod
+    def route_business_data(state: RunState) -> str:
+        if state.get("business_data_ok"):
             return "build_test"
         return "needs_user" if state.get("source_stop_code") else "code_loop"
 
@@ -707,6 +779,8 @@ class Workflow:
         self.store.update_run(run_id, phase="CommitVersion", event_type="phase", event_payload={"phase": "CommitVersion"})
         candidate = state["candidate"]
         manifest = {**candidate["manifest"], "preview": {"status": "checked", **state["preview_result"]}}
+        if state.get("business_data_result"):
+            manifest["business_data_check"] = state["business_data_result"]
         run = self.store.get_run(run_id)
         inherited = (run.get("base_spec") or {}).get("requests") or ([run["base_spec"]["request_text"]] if run.get("base_spec") else [])
         manifest["effective_spec"] = {"request_text": run["request_text"], "requests": (inherited + [run["request_text"]])[-5:],
@@ -719,7 +793,8 @@ class Workflow:
         self.store.update_run(run_id, status="completed", phase="Done", version_id=version["id"], card_json=dumps({
             "type": "test_result", "schema_version": 1, "card_id": str(uuid.uuid4()), "run_id": run_id,
             "status": "passed", "payload": {"version_id": version["id"], "build": manifest["build"], "files": manifest["files"],
-            "diagnostics_ref": f"/api/runs/{run_id}/build-log", "browser_check": "not_run", "preview_check": state["preview_result"]}, "actions": []
+            "diagnostics_ref": f"/api/runs/{run_id}/build-log", "browser_check": "not_run", "preview_check": state["preview_result"],
+            "business_data_check": state.get("business_data_result")}, "actions": []
         }), event_type="completed", event_payload={"version_id": version["id"]})
         self._cleanup_artifacts()
         return {"version_id": version["id"]}
@@ -741,7 +816,7 @@ class Workflow:
         if build_failure or waitable_source:
             card["status"] = "pending"
             card["payload"]["failure_summary"] = summary
-            card["payload"]["failure_stage"] = "source_validation" if source_failure else "build"
+            card["payload"]["failure_stage"] = ("business_data_check" if state.get("business_data_ok") is False else "source_validation") if source_failure else "build"
             card["payload"]["stop_code"] = state.get("source_stop_code") if source_failure else state.get("build_stop_code") or None
             card["payload"]["manual_rounds"] = state.get("manual_rounds", 0)
             card["actions"] = (["continue_repair", "guided_repair"] if source_failure or diagnosis.get("repairable") else []) + ([] if source_failure else ["rebuild"])
@@ -749,7 +824,7 @@ class Workflow:
                 card["actions"].append("extend_auto_repair")
         elif source_failure:
             card["payload"]["failure_summary"] = summary
-            card["payload"]["failure_stage"] = "source_validation"
+            card["payload"]["failure_stage"] = "business_data_check" if state.get("business_data_ok") is False else "source_validation"
         card_id = card["card_id"]
         repair_waiting = build_failure or waitable_source
         version = state.get("spec_version", 0) + 1 if repair_waiting else state.get("spec_version", 0)
@@ -759,7 +834,7 @@ class Workflow:
                               event_payload={"card": card} if repair_waiting else {"reason": state.get("source_stop_code") if source_failure else diagnosis.get("category", "requirements_incomplete")})
         if source_failure:
             issue_codes = tuple(issue["code"] for issue in (state.get("source_feedback") or {}).get("issues", []))
-            self._capture_failure(state["run_id"], source="agent", phase="ValidateSource", code="unsafe_source",
+            self._capture_failure(state["run_id"], source="agent", phase="BusinessDataCheck" if state.get("business_data_ok") is False else "ValidateSource", code="unsafe_source",
                                   exception_type="UnsafeSource", source_validation_codes=issue_codes)
         elif build_failure:
             stop_codes = {"no_progress": "build_no_progress", "recurring_error": "build_recurring_error",
@@ -917,7 +992,7 @@ class Workflow:
                 next_node = snapshot.next[0] if snapshot.next else "clarify"
                 resume_phase = {"plan": "Plan", "clarify": "Clarify", "clarity_gate": "ClarityGate",
                                 "code_loop": "CodeLoop", "validate_source": "ValidateSource",
-                                "build_test": "BuildTest", "diagnose": "Diagnose",
+                                "business_data_check": "BusinessDataCheck", "build_test": "BuildTest", "diagnose": "Diagnose",
                                 "package_candidate": "PackageCandidate", "preview_check": "PreviewCheck",
                                 "commit_version": "CommitVersion"}.get(next_node, "Prepare")
             reason = str(run.get("error") or "本次任务达到额度上限。")[:300]

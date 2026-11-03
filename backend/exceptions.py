@@ -76,7 +76,7 @@ class PlanValidationError(RuntimeError):
 
 PHASES = {
     "Clarify", "ClarityGate", "WaitClarification", "Plan", "WaitPlan", "Prepare", "ValidateSource",
-    "CodeLoop", "BuildTest", "Diagnose", "PackageCandidate", "PreviewCheck", "CommitVersion", "NeedsUser", "Done",
+    "CodeLoop", "BusinessDataCheck", "BuildTest", "Diagnose", "PackageCandidate", "PreviewCheck", "CommitVersion", "NeedsUser", "Done",
 }
 
 
