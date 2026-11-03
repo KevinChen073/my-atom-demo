@@ -52,6 +52,15 @@ def test_business_data_contract_records_source_evidence_not_browser_pass():
     assert inspect_business_data({}, plan(False))["ok"] is True
 
 
+def test_business_data_check_accepts_scoped_colon_key_and_repairs_invalid_constant():
+    source = "const STORAGE_KEY = 'order-demo:orders'; generatedAppStorage.getItem(STORAGE_KEY); generatedAppStorage.setItem(STORAGE_KEY, '[]')"
+    assert inspect_business_data({"src/hooks/useOrders.ts": source}, plan())["ok"] is True
+    broken = source.replace("order-demo:orders", "order-demo/orders")
+    result = inspect_business_data({"src/hooks/useOrders.ts": broken}, plan())
+    assert [issue["code"] for issue in result["issues"]] == ["invalid_business_data_key"]
+    assert result["issues"][0]["file"] == "src/hooks/useOrders.ts"
+
+
 def test_workflow_storage_node_routes_missing_writes_to_targeted_repair(tmp_path):
     settings = Settings(data_dir=tmp_path, model_api_key="test-only")
     store = Store(settings.app_db)

@@ -20,6 +20,7 @@ MAX_HOOKS = 4
 SOURCE_FAILURE_REASONS = {
     "missing_business_data_read": "缺少业务数据读回逻辑，刷新后无法恢复",
     "missing_business_data_write": "缺少业务数据保存逻辑",
+    "invalid_business_data_key": "业务数据键名不符合模板存储规则",
     "updater_side_effect": "状态更新函数中包含持久化或再次更新状态",
     "unscoped_storage_access": "生成源码直接访问浏览器存储或清理其他项目数据",
     "missing_files_mapping": "模型未返回源码文件映射",
@@ -72,6 +73,7 @@ def source_contract_prompt(target_files: list[str] | None = None) -> str:
         + "样式只写 src/app.css；readme.md 用中文说明功能和本地数据范围。"
         + "生成应用与工作台共用 origin。业务数据只能通过模板内置的 'src/hooks/generatedAppStorage.ts' 中的 generatedAppStorage.getItem/setItem/removeItem 读写；App 或组件可导入该适配器。不要生成该模板文件，不要在生成源码中直接访问 localStorage 或其他浏览器存储，也不要调用 clear 或枚举键。模板按服务端注入的项目 UUID 自动加 myatom.app.<项目 UUID>. 前缀；刷新后读取，读写异常在界面明确提示，写入失败不能显示已保存。"
         + "批准计划中的 business_data.required 为 true 时，必须在源码中通过 generatedAppStorage.getItem 读回、通过 generatedAppStorage.setItem 写入；临时输入框内容等纯界面状态无需保存。"
+        + "generatedAppStorage 的键名须以英文字母开头，只含英文字母、数字、下划线、点、冒号或短横线，最长 80 字符；同一份业务数据读写使用同一键名。"
         + "同一项目跨版本共用前缀，但业务数据不随代码版本回滚；读取旧格式时要明确提示。"
         + "涉及计时用 Date.now() 真实时间差；结算使用稳定标识防止重复计数。涉及提交的按钮防连续重复触发。"
         + "只允许 React、模板文件和已生成文件的静态导入；禁止外部接口、图片 URL、fetch、服务端 CRUD、SQL、浏览器凭证、动态 import、eval 和第三方库。"

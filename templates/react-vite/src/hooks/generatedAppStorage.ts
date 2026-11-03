@@ -5,7 +5,7 @@ if (!projectId || !/^[0-9a-f]{32}$/.test(projectId)) {
 }
 
 const prefix = `myatom.app.${projectId}.`
-const keyPattern = /^[A-Za-z][A-Za-z0-9_.-]{0,79}$/
+const keyPattern = /^[A-Za-z][A-Za-z0-9_.:-]{0,79}$/
 
 function scopedKey(key: string): string {
   if (!keyPattern.test(key)) throw new Error('数据键名无效')

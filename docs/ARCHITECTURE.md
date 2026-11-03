@@ -152,7 +152,7 @@ flowchart TD
 | `Prepare` | 已确认计划 → 固定模板快照、工作区、任务游标 | 幂等创建工作区；保存模板版本与 manifest |
 | `CodeLoop` | 已批准需求与检查反馈 → 一份候选缓存引用 | 固定模板生成节点，不建立通用 CodeAgent 子图。问题全部定位到具体生成文件时仅输出这些文件，合并前一候选；否则输出完整映射。必含 `src/App.tsx`、`src/app.css`、根目录 `readme.md`；简单状态与业务逻辑可写在 App 或组件，复杂时再拆到 `src/hooks/`；最多 12 个生成文件、6 个组件、4 个 hook、180 KB 总量。源码布局放宽见 [ADR-029](decisions/ADR-029-generated-source-layout-relaxation.md) |
 | `ValidateSource` | 候选引用 → 受控问题/反馈/具体文件或完整重生建议 | 确定性校验完整候选；只有通过才幂等写工作区并进入构建。失败保存问题码、目标文件和尝试编号，不把源码放进 checkpoint；和构建修复共用 60 轮及无进展/复现停机条件 |
-| `BusinessDataCheck` | 已批准计划的 `business_data` 与候选源码 → 读写接线证据或定向反馈 | 需要保存业务数据时检查 `generatedAppStorage.getItem/setItem`；缺失回 `CodeLoop` 并复用修复上限。仅为 `source_contract_only`，不宣称浏览器真实保存；结果进入事件、manifest 与测试卡。见 [ADR-034](decisions/ADR-034-business-data-source-gate.md) |
+| `BusinessDataCheck` | 已批准计划的 `business_data` 与候选源码 → 读写接线证据或定向反馈 | 需要保存业务数据时检查 `generatedAppStorage.getItem/setItem` 及可确定的静态键名；缺失或键名不合规回 `CodeLoop` 并复用修复上限。仅为 `source_contract_only`，不宣称浏览器真实保存；结果进入事件、manifest 与测试卡。见 [ADR-034](decisions/ADR-034-business-data-source-gate.md) |
 | `BuildTest` | 工作区 → 构建、诊断摘要及错误指纹 | 每轮保存错误集合、停机代码、失败命令与日志引用；依赖安装/环境故障不进代码修复 |
 | `Diagnose` | 仅源码编译/类型错误 → 修复任务 | **回退分支**到 `CodeLoop`；能从构建证据定位生成文件则局部重生；源码校验与构建修复合计最多 60 轮，最近 3 次错误集合相同或某具体错误第 5 次出现则提前交人工 |
 | `PackageCandidate` | 通过的工作区 → 候选源码/构建产物、hash、manifest | 候选目录独立于可用版本，不占 5 版额度 |
