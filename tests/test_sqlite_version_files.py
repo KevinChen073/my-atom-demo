@@ -7,8 +7,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.preview import create_preview_app
-from backend.preview_access import PreviewAccess, preview_host
+from backend.api import create_app, owner_hash
 from backend.settings import Settings
 from backend.store import Store
 
@@ -24,7 +23,7 @@ def _item(path: str, content: str, kind: str) -> tuple[dict, dict]:
 def test_sqlite_version_preview_and_source_survive_restart_without_artifacts(tmp_path: Path):
     settings = Settings(data_dir=tmp_path, model_api_key="test-only", preview_port=8001)
     store = Store(settings.app_db)
-    project = store.create_project("owner", "snapshot")
+    project = store.create_project(owner_hash("owner"), "snapshot")
     run, _ = store.create_run(project["id"], "make a small app", "one")
     source, source_row = _item("src/App.tsx", "export default function App(){return <p>OK</p>}", "source")
     html, html_row = _item("dist/index.html", "<main>snapshot survives</main>", "dist")
@@ -33,11 +32,14 @@ def test_sqlite_version_preview_and_source_survive_restart_without_artifacts(tmp
     shutil.rmtree(tmp_path / "artifacts", ignore_errors=True)
     restored = Store(settings.app_db)
     assert restored.get_version_file(version["id"], "src/App.tsx")[0] == source_row["content"]
-    assert restored.get_project(project["id"], "owner")["active_version_id"] == version["id"]
-    access = PreviewAccess(tmp_path / "preview_access.sqlite3")
-    ticket, _ = access.issue_ticket(version["id"], project["id"])
-    with TestClient(create_preview_app(settings), base_url=f"http://{preview_host(project['id'])}:8001") as client:
-        response = client.get(f"/open/{version['id']}?ticket={ticket}")
+    assert restored.get_project(project["id"], owner_hash("owner"))["active_version_id"] == version["id"]
+    with TestClient(create_app(settings), base_url=settings.workbench_origin) as client:
+        client.cookies.set("myatom_guest", "owner")
+        issued = client.get(f"/api/versions/{version['id']}/preview")
+        assert issued.status_code == 200
+        opened = client.get(issued.json()["url"], follow_redirects=False)
+        assert opened.status_code == 303
+        response = client.get(opened.headers["location"])
         assert response.status_code == 200
         assert "snapshot survives" in response.text
 

@@ -922,7 +922,7 @@ class Workflow:
             if not self.store.can_reopen_failed_run(run_id):
                 raise ValueError("只有当前项目最近一次已结束的构建失败可继续修复")
             config = {"configurable": {"thread_id": run_id},
-                      "recursion_limit": max(100, effective_limits(run)["fix_rounds"] * 4 + 30)}
+                      "recursion_limit": max(100, effective_limits(run)["fix_rounds"] * 6 + 30)}
             snapshot = self.graph.get_state(config)
             state = snapshot.values
             build = state.get("build_result") or {}
@@ -1068,7 +1068,7 @@ class Workflow:
             heartbeat_thread.start()
             self._check_execution_time(run_id)
             config = {"configurable": {"thread_id": run_id},
-                      "recursion_limit": max(100, effective_limits(run)["fix_rounds"] * 4 + 30)}
+                      "recursion_limit": max(100, effective_limits(run)["fix_rounds"] * 6 + 30)}
             pending = self.store.pending_decision(run_id)
             snapshot = self.graph.get_state(config)
             if pending and snapshot.next and snapshot.next[0] in {"wait_clarification", "wait_plan", "wait_repair"}:

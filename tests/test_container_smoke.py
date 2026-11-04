@@ -19,5 +19,5 @@ def test_container_smoke_exposes_only_health(tmp_path):
 
 
 def test_production_mode_fails_closed_without_adapters(tmp_path):
-    with pytest.raises(RuntimeError, match="生产存储与隔离 Runner 尚未接入"):
+    with pytest.raises(RuntimeError, match="不支持的运行环境"):
         create_app(Settings(data_dir=tmp_path, app_env="production", model_api_key=""))

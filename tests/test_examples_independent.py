@@ -13,7 +13,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.api import create_app
-from backend.preview import create_preview_app
 from backend.settings import Settings
 from tests.live_examples_smoke import version_hooks_use_local_storage
 from tests.test_mvp1 import wait_status
@@ -122,9 +121,9 @@ class FixedExampleModel:
         if node == "code_loop":
             return {"files": {
                 "src/App.tsx": "import './app.css'\nimport { useAppState } from './hooks/useAppState'\nexport default function App() { const { count, add, error } = useAppState(); return <main><h1>" + self.title + "</h1><button onClick={add}>新增记录</button><p role=\"alert\">{error}</p><p>{count} 条记录</p></main> }",
-                "src/hooks/useAppState.ts": "import { useState } from 'react'\nexport function useAppState() { const [count, setCount] = useState(() => { try { return Number(localStorage.getItem('count') || '0') } catch { return 0 } }); const [error, setError] = useState(''); function add() { try { const next = count + 1; localStorage.setItem('count', String(next)); setCount(next) } catch { setError('本地保存失败') } } return { count, add, error } }",
+                "src/hooks/useAppState.ts": "import { useState } from 'react'\nimport { generatedAppStorage } from './generatedAppStorage'\nexport function useAppState() { const [count, setCount] = useState(() => { try { return Number(generatedAppStorage.getItem('count') || '0') } catch { return 0 } }); const [error, setError] = useState(''); function add() { try { const next = count + 1; generatedAppStorage.setItem('count', String(next)); setCount(next) } catch { setError('本地保存失败') } } return { count, add, error } }",
                 "src/app.css": "body { font-family: sans-serif; } main { padding: 2rem; }",
-                "readme.md": "# " + self.title + "\n记录保存在项目预览域的 localStorage。",
+                "readme.md": "# " + self.title + "\n记录通过项目存储适配器保存在当前浏览器的 localStorage。",
             }}
         raise AssertionError(node)
 
@@ -151,12 +150,14 @@ def test_example_fixed_source_workflow_build_preview_and_data(tmp_path: Path, ex
         assert done["version_id"] == version["id"]
         assert version["manifest"]["preview"]["ok"] is True
         hook = main.get(f"/api/versions/{version['id']}/files/src/hooks/useAppState.ts")
-        assert hook.status_code == 200 and "localStorage" in hook.text
+        assert hook.status_code == 200 and "generatedAppStorage.setItem" in hook.text
         issued = main.get(f"/api/versions/{version['id']}/preview")
         assert issued.status_code == 200
         path = urlsplit(issued.json()["url"])
-        assert path.hostname == "p-" + project["id"].replace("-", "") + ".localhost"
-        with TestClient(create_preview_app(settings), base_url=f"{path.scheme}://{path.netloc}") as preview:
-            opened = preview.get(path.path + "?" + path.query)
-            assert opened.status_code == 200 and "assets" in opened.text
-            assert preview.get(f"/data/{version['id']}/todos").status_code == 404
+        assert path.netloc == urlsplit(settings.workbench_origin).netloc
+        opened = main.get(issued.json()["url"], follow_redirects=False)
+        assert opened.status_code == 303
+        preview = main.get(opened.headers["location"])
+        assert preview.status_code == 200 and "assets" in preview.text
+        assert f'content="{project["id"].replace("-", "")}"' in preview.text
+        assert main.get(f"/data/{version['id']}/todos").status_code == 404
